@@ -30,8 +30,11 @@
     "clean": "rimraf lib",
     "prebuild": "npm run clean",
     "obfuscate": "node ./scripts/obfuscate.mjs",
-    "prepublishOnly": "npm run build && npm run obfuscate",
-    "release": "npm publish --access public"
+    "prepublishOnly": "npm run clean && npm run build && npm run obfuscate",
+    "release": "npm publish --access public",
+    "release:patch": "tsx scripts/release.ts patch",
+    "release:minor": "tsx scripts/release.ts minor",
+    "release:major": "tsx scripts/release.ts major"
   },
   "keywords": [
     "orm",
