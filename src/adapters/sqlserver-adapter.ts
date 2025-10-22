@@ -127,7 +127,7 @@ export class SQLServerAdapter extends BaseAdapter {
   }
 
   isSupported(): boolean {
-    const require = createRequire(import.meta.url);
+    // const require = createRequire(import.meta.url);
     try {
       require.resolve("mssql");
       return true;

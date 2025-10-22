@@ -119,7 +119,7 @@ export class PostgreSQLAdapter extends BaseAdapter {
   }
 
   isSupported(): boolean {
-    const require = createRequire(import.meta.url);
+    // const require = createRequire(import.meta.url);
     try {
       require.resolve("pg");
       return true;

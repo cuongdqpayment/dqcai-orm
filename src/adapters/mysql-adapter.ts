@@ -115,7 +115,7 @@ export class MySQLAdapter extends BaseAdapter {
   }
 
   isSupported(): boolean {
-    const require = createRequire(import.meta.url);
+    // const require = createRequire(import.meta.url);
     try {
       require.resolve("mysql2");
       return true;
