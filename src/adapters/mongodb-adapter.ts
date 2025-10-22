@@ -1,19 +1,19 @@
 // ========================
 // src/adapters/mongodb-adapter.ts
 // ========================
-
-import { BaseAdapter } from "./base-adapter";
+import { createRequire } from "module";
 import {
+  BulkOperation,
   DatabaseType,
   DbConfig,
-  IConnection,
   EntitySchemaDefinition,
-  SchemaDefinition,
+  IConnection,
   QueryFilter,
   QueryOptions,
+  SchemaDefinition,
   Transaction,
-  BulkOperation,
 } from "../types/orm.types";
+import { BaseAdapter } from "../core/base-adapter";
 
 /**
  * MongoDB Configuration
@@ -35,16 +35,18 @@ export class MongoDBAdapter extends BaseAdapter {
 
   private client: any = null;
   private db: any = null;
+  private ObjectId: any = null;
 
   async connect(config: MongoDBConfig): Promise<IConnection> {
     try {
-      // In real implementation: const { MongoClient } = require('mongodb');
+      const { MongoClient, ObjectId: MongoObjectId } = await import("mongodb");
+      this.ObjectId = MongoObjectId;
       const url =
         config.url || config.connectionString || "mongodb://localhost:27017";
 
-      // this.client = new MongoClient(url, config.options);
-      // await this.client.connect();
-      // this.db = this.client.db(config.database);
+      this.client = new MongoClient(url, config.options);
+      await this.client.connect();
+      this.db = this.client.db(config.database);
 
       this.connection = {
         rawConnection: this.client,
@@ -77,8 +79,8 @@ export class MongoDBAdapter extends BaseAdapter {
     }
 
     // MongoDB uses aggregation pipelines and commands
-    console.log("MongoDB Command:", query);
-    return { rows: [], rowCount: 0 };
+    const result = await this.db.admin().command(query);
+    return { rows: [result], rowCount: 1 };
   }
 
   // MongoDB-specific implementations
@@ -93,25 +95,22 @@ export class MongoDBAdapter extends BaseAdapter {
     // Optionally create validation schema
     // await this.db.createCollection(collectionName, { validator: ... });
 
-    console.log(
-      `MongoDB collection ${collectionName} will be created on first insert`
-    );
+    await this.db.createCollection(collectionName);
   }
 
   async dropTable(collectionName: string): Promise<void> {
     if (!this.db) throw new Error("Not connected");
 
-    // await this.db.collection(collectionName).drop();
-    console.log(`MongoDB collection ${collectionName} dropped`);
+    await this.db.collection(collectionName).drop();
   }
 
   async tableExists(collectionName: string): Promise<boolean> {
     if (!this.db) throw new Error("Not connected");
 
-    // const collections = await this.db.listCollections({ name: collectionName }).toArray();
-    // return collections.length > 0;
-
-    return true;
+    const collections = await this.db
+      .listCollections({ name: collectionName })
+      .toArray();
+    return collections.length > 0;
   }
 
   async getTableInfo(
@@ -127,21 +126,15 @@ export class MongoDBAdapter extends BaseAdapter {
   async insertOne(collectionName: string, data: any): Promise<any> {
     if (!this.db) throw new Error("Not connected");
 
-    // const result = await this.db.collection(collectionName).insertOne(data);
-    // return { ...data, _id: result.insertedId };
-
-    console.log(`MongoDB insertOne to ${collectionName}`, data);
-    return data;
+    const result = await this.db.collection(collectionName).insertOne(data);
+    return { ...data, _id: result.insertedId };
   }
 
   async insertMany(collectionName: string, data: any[]): Promise<any[]> {
     if (!this.db) throw new Error("Not connected");
 
-    // const result = await this.db.collection(collectionName).insertMany(data);
-    // return data.map((doc, i) => ({ ...doc, _id: result.insertedIds[i] }));
-
-    console.log(`MongoDB insertMany to ${collectionName}`, data.length);
-    return data;
+    const result = await this.db.collection(collectionName).insertMany(data);
+    return data.map((doc, i) => ({ ...doc, _id: result.insertedIds[i] }));
   }
 
   async find(
@@ -153,14 +146,12 @@ export class MongoDBAdapter extends BaseAdapter {
 
     const mongoFilter = this.convertFilterToMongo(filter);
 
-    // let cursor = this.db.collection(collectionName).find(mongoFilter);
-    // if (options?.sort) cursor = cursor.sort(options.sort);
-    // if (options?.limit) cursor = cursor.limit(options.limit);
-    // if (options?.skip || options?.offset) cursor = cursor.skip(options.skip || options.offset);
-    // return await cursor.toArray();
-
-    console.log(`MongoDB find in ${collectionName}`, mongoFilter, options);
-    return [];
+    let cursor = this.db.collection(collectionName).find(mongoFilter);
+    if (options?.sort) cursor = cursor.sort(options.sort);
+    if (options?.limit) cursor = cursor.limit(options.limit);
+    if (options?.skip || options?.offset)
+      cursor = cursor.skip(options.skip || options.offset || 0);
+    return await cursor.toArray();
   }
 
   async findOne(
@@ -172,17 +163,16 @@ export class MongoDBAdapter extends BaseAdapter {
 
     const mongoFilter = this.convertFilterToMongo(filter);
 
-    // return await this.db.collection(collectionName).findOne(mongoFilter, options);
+    const mongoOptions: any = {};
+    if (options?.sort) mongoOptions.sort = options.sort;
 
-    console.log(`MongoDB findOne in ${collectionName}`, mongoFilter);
-    return null;
+    return await this.db
+      .collection(collectionName)
+      .findOne(mongoFilter, mongoOptions);
   }
 
   async findById(collectionName: string, id: any): Promise<any | null> {
-    // const ObjectId = require('mongodb').ObjectId;
-    // return this.findOne(collectionName, { _id: new ObjectId(id) } as any);
-
-    return this.findOne(collectionName, { _id: id } as any);
+    return this.findOne(collectionName, { _id: new this.ObjectId(id) } as any);
   }
 
   async update(
@@ -194,14 +184,10 @@ export class MongoDBAdapter extends BaseAdapter {
 
     const mongoFilter = this.convertFilterToMongo(filter);
 
-    // const result = await this.db.collection(collectionName).updateMany(
-    //   mongoFilter,
-    //   { $set: data }
-    // );
-    // return result.modifiedCount;
-
-    console.log(`MongoDB updateMany in ${collectionName}`, mongoFilter, data);
-    return 0;
+    const result = await this.db
+      .collection(collectionName)
+      .updateMany(mongoFilter, { $set: data });
+    return result.modifiedCount;
   }
 
   async updateOne(
@@ -213,14 +199,10 @@ export class MongoDBAdapter extends BaseAdapter {
 
     const mongoFilter = this.convertFilterToMongo(filter);
 
-    // const result = await this.db.collection(collectionName).updateOne(
-    //   mongoFilter,
-    //   { $set: data }
-    // );
-    // return result.modifiedCount > 0;
-
-    console.log(`MongoDB updateOne in ${collectionName}`, mongoFilter, data);
-    return false;
+    const result = await this.db
+      .collection(collectionName)
+      .updateOne(mongoFilter, { $set: data });
+    return result.modifiedCount > 0;
   }
 
   async updateById(
@@ -228,10 +210,11 @@ export class MongoDBAdapter extends BaseAdapter {
     id: any,
     data: any
   ): Promise<boolean> {
-    // const ObjectId = require('mongodb').ObjectId;
-    // return this.updateOne(collectionName, { _id: new ObjectId(id) } as any, data);
-
-    return this.updateOne(collectionName, { _id: id } as any, data);
+    return this.updateOne(
+      collectionName,
+      { _id: new this.ObjectId(id) } as any,
+      data
+    );
   }
 
   async delete(collectionName: string, filter: QueryFilter): Promise<number> {
@@ -239,11 +222,10 @@ export class MongoDBAdapter extends BaseAdapter {
 
     const mongoFilter = this.convertFilterToMongo(filter);
 
-    // const result = await this.db.collection(collectionName).deleteMany(mongoFilter);
-    // return result.deletedCount;
-
-    console.log(`MongoDB deleteMany in ${collectionName}`, mongoFilter);
-    return 0;
+    const result = await this.db
+      .collection(collectionName)
+      .deleteMany(mongoFilter);
+    return result.deletedCount;
   }
 
   async deleteOne(
@@ -254,18 +236,16 @@ export class MongoDBAdapter extends BaseAdapter {
 
     const mongoFilter = this.convertFilterToMongo(filter);
 
-    // const result = await this.db.collection(collectionName).deleteOne(mongoFilter);
-    // return result.deletedCount > 0;
-
-    console.log(`MongoDB deleteOne in ${collectionName}`, mongoFilter);
-    return false;
+    const result = await this.db
+      .collection(collectionName)
+      .deleteOne(mongoFilter);
+    return result.deletedCount > 0;
   }
 
   async deleteById(collectionName: string, id: any): Promise<boolean> {
-    // const ObjectId = require('mongodb').ObjectId;
-    // return this.deleteOne(collectionName, { _id: new ObjectId(id) } as any);
-
-    return this.deleteOne(collectionName, { _id: id } as any);
+    return this.deleteOne(collectionName, {
+      _id: new this.ObjectId(id),
+    } as any);
   }
 
   async count(collectionName: string, filter?: QueryFilter): Promise<number> {
@@ -273,19 +253,16 @@ export class MongoDBAdapter extends BaseAdapter {
 
     const mongoFilter = filter ? this.convertFilterToMongo(filter) : {};
 
-    // return await this.db.collection(collectionName).countDocuments(mongoFilter);
-
-    console.log(`MongoDB count in ${collectionName}`, mongoFilter);
-    return 0;
+    return await this.db.collection(collectionName).countDocuments(mongoFilter);
   }
 
   async aggregate(collectionName: string, pipeline: any[]): Promise<any[]> {
     if (!this.db) throw new Error("Not connected");
 
-    // return await this.db.collection(collectionName).aggregate(pipeline).toArray();
-
-    console.log(`MongoDB aggregate in ${collectionName}`, pipeline);
-    return [];
+    return await this.db
+      .collection(collectionName)
+      .aggregate(pipeline)
+      .toArray();
   }
 
   async distinct(
@@ -297,10 +274,9 @@ export class MongoDBAdapter extends BaseAdapter {
 
     const mongoFilter = filter ? this.convertFilterToMongo(filter) : {};
 
-    // return await this.db.collection(collectionName).distinct(field, mongoFilter);
-
-    console.log(`MongoDB distinct in ${collectionName}`, field, mongoFilter);
-    return [];
+    return await this.db
+      .collection(collectionName)
+      .distinct(field, mongoFilter);
   }
 
   async bulkWrite(
@@ -345,34 +321,31 @@ export class MongoDBAdapter extends BaseAdapter {
       })
       .filter((op) => op !== null);
 
-    // const result = await this.db.collection(collectionName).bulkWrite(bulkOps);
+    const result = await this.db.collection(collectionName).bulkWrite(bulkOps);
 
-    console.log(`MongoDB bulkWrite in ${collectionName}`, bulkOps);
-    return { insertedCount: 0, modifiedCount: 0, deletedCount: 0 };
+    return result;
   }
 
   async beginTransaction(): Promise<Transaction> {
     if (!this.client) throw new Error("Not connected");
 
-    // const session = this.client.startSession();
-    // session.startTransaction();
-
-    let active = true;
+    const session = this.client.startSession();
+    await session.startTransaction();
 
     return {
       commit: async () => {
-        if (!active) throw new Error("Transaction already completed");
-        // await session.commitTransaction();
-        // session.endSession();
-        active = false;
+        if (!session.inTransaction)
+          throw new Error("Transaction already completed");
+        await session.commitTransaction();
+        await session.endSession();
       },
       rollback: async () => {
-        if (!active) throw new Error("Transaction already completed");
-        // await session.abortTransaction();
-        // session.endSession();
-        active = false;
+        if (!session.inTransaction)
+          throw new Error("Transaction already completed");
+        await session.abortTransaction();
+        await session.endSession();
       },
-      isActive: () => active,
+      isActive: () => session.inTransaction,
     };
   }
 
@@ -446,6 +419,7 @@ export class MongoDBAdapter extends BaseAdapter {
   }
 
   isSupported(): boolean {
+    const require = createRequire(import.meta.url);
     try {
       require.resolve("mongodb");
       return true;

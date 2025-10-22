@@ -5,7 +5,7 @@
 /**
  * Supported database types
  */
-export type DatabaseType = 'postgresql' | 'mysql' | 'mariadb' | 'sqlite' | 'sqlserver' | 'mongodb';
+export type DatabaseType = 'postgresql' | 'mysql' | 'mariadb' | 'sqlite' | 'sqlserver' | 'mongodb' | 'oracle';
 
 /**
  * Field types for schema definition

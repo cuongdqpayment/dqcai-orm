@@ -65,10 +65,20 @@
     "@rollup/plugin-json": "^6.1.0",
     "@rollup/plugin-node-resolve": "^16.0.1",
     "@rollup/plugin-typescript": "^12.1.4",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/mssql": "^9.1.8",
     "@types/node": "^18.0.0",
+    "@types/oracledb": "^6.9.1",
+    "@types/pg": "^8.15.5",
+    "better-sqlite3": "^9.0.0",
     "esbuild": "^0.25.9",
-    "javascript-obfuscator": "^4.1.1",
+    "javascript-obfuscator": "^0.6.2",
+    "mongodb": "^6.0.0",
+    "mssql": "^12.0.0",
+    "mysql2": "^3.0.0",
     "obfuscate": "^0.0.11",
+    "oracledb": "^6.0.0",
+    "pg": "^8.0.0",
     "rimraf": "^6.0.1",
     "rollup": "^4.49.0",
     "rollup-plugin-esbuild": "^6.2.1",
@@ -83,7 +93,31 @@
     "access": "public"
   },
   "dependencies": {
-    "@dqcai/logger": "^2.1.0",
-    "mongodb": "^6.19.0"
+    "@dqcai/logger": "^2.1.0"
+  },
+  "peerDependencies": {
+    "better-sqlite3": "^9.0.0",
+    "mongodb": "^6.0.0",
+    "mssql": "^12.0.0",
+    "mysql2": "^3.0.0",
+    "oracledb": "^6.0.0",
+    "pg": "^8.0.0"
+  },
+  "peerDependenciesMeta": {
+    "pg": {
+      "optional": true
+    },
+    "mysql2": {
+      "optional": true
+    },
+    "mongodb": {
+      "optional": true
+    },
+    "better-sqlite3": {
+      "optional": true
+    },
+    "oracledb": {
+      "optional": true
+    }
   }
 }

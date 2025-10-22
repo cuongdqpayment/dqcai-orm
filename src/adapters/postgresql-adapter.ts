@@ -2,8 +2,14 @@
 // src/adapters/postgresql-adapter.ts
 // ========================
 
-import { DatabaseType, DbConfig, EntitySchemaDefinition, IConnection } from '../types/orm.types';
-import { BaseAdapter } from './base-adapter';
+import { createRequire } from "module";
+import {
+  DatabaseType,
+  DbConfig,
+  EntitySchemaDefinition,
+  IConnection,
+} from "../types/orm.types";
+import { BaseAdapter } from "../core/base-adapter";
 
 /**
  * PostgreSQL Configuration
@@ -23,18 +29,17 @@ export interface PostgreSQLConfig extends DbConfig {
  * Requires: pg package
  */
 export class PostgreSQLAdapter extends BaseAdapter {
-  type: DatabaseType = 'postgresql';
-  databaseType: DatabaseType = 'postgresql';
-  
+  type: DatabaseType = "postgresql";
+  databaseType: DatabaseType = "postgresql";
+
   private client: any = null;
   private pool: any = null;
 
   async connect(config: PostgreSQLConfig): Promise<IConnection> {
     try {
-      // In real implementation, use: const { Pool } = require('pg');
-      // this.pool = new Pool({ ...config });
-      // const client = await this.pool.connect();
-      
+      const { Pool } = await import("pg");
+      this.pool = new Pool({ ...config } as any);
+
       this.connection = {
         rawConnection: this.pool,
         isConnected: true,
@@ -43,9 +48,9 @@ export class PostgreSQLAdapter extends BaseAdapter {
             await this.pool.end();
             this.connection = null;
           }
-        }
+        },
       };
-      
+
       this.config = config;
       return this.connection;
     } catch (error) {
@@ -62,15 +67,11 @@ export class PostgreSQLAdapter extends BaseAdapter {
 
   async executeRaw(query: string, params?: any[]): Promise<any> {
     if (!this.pool) {
-      throw new Error('Not connected to PostgreSQL');
+      throw new Error("Not connected to PostgreSQL");
     }
-    
-    // In real implementation:
-    // const result = await this.pool.query(query, params);
-    // return result;
-    
-    console.log('PostgreSQL Query:', query, params);
-    return { rows: [], rowCount: 0 };
+
+    const result = await this.pool.query(query, params);
+    return result;
   }
 
   async tableExists(tableName: string): Promise<boolean> {
@@ -80,45 +81,50 @@ export class PostgreSQLAdapter extends BaseAdapter {
         WHERE table_name = $1
       ) as exists
     `;
-    const result = await this.raw(query, [tableName]);
+    const result = await this.executeRaw(query, [tableName]);
     return result.rows[0]?.exists || false;
   }
 
-  async getTableInfo(tableName: string): Promise<EntitySchemaDefinition | null> {
+  async getTableInfo(
+    tableName: string
+  ): Promise<EntitySchemaDefinition | null> {
     const query = `
       SELECT column_name, data_type, is_nullable, column_default
       FROM information_schema.columns
       WHERE table_name = $1
       ORDER BY ordinal_position
     `;
-    
-    const result = await this.raw(query, [tableName]);
-    
+
+    const result = await this.executeRaw(query, [tableName]);
+
     if (result.rows.length === 0) {
       return null;
     }
-    
+
     const cols = result.rows.map((row: any) => ({
       name: row.column_name,
       type: row.data_type,
-      nullable: row.is_nullable === 'YES',
-      default: row.column_default
+      nullable: row.is_nullable === "YES",
+      default: row.column_default,
     }));
-    
+
     return {
       name: tableName,
-      cols
+      cols,
     };
   }
 
+  protected getParamPlaceholder(index: number): string {
+    return `$${index + 1}`;
+  }
+
   isSupported(): boolean {
+    const require = createRequire(import.meta.url);
     try {
-      // Check if pg module is available
-      require.resolve('pg');
+      require.resolve("pg");
       return true;
     } catch {
       return false;
     }
   }
 }
-

@@ -130,6 +130,7 @@ export class DatabaseFactory {
       sqlite: 0,
       sqlserver: 1433,
       mongodb: 27017,
+      oracle: 0,
     };
     return portMap[dbType] || 0;
   }
