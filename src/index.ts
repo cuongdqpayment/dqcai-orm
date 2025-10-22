@@ -23,6 +23,8 @@ export { MongoDBAdapter } from "./adapters/mongodb-adapter";
 export type { MongoDBConfig } from "./adapters/mongodb-adapter";
 export { SQLServerAdapter } from "./adapters/sqlserver-adapter";
 export type { SQLServerConfig } from "./adapters/sqlserver-adapter";
+export { OracleAdapter } from "./adapters/oracle-adapter";
+export type { OracleConfig } from "./adapters/oracle-adapter";
 
 // Query & Model
 export { QueryBuilder } from "./query/query-builder";
