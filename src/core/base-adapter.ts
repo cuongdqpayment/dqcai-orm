@@ -33,11 +33,11 @@ export abstract class BaseAdapter implements IAdapter {
   // Các phương thức abstract bắt buộc phải implement
   abstract executeRaw(query: string | any, params?: any[]): Promise<any>;
   abstract tableExists(tableName: string): Promise<boolean>;
+
   abstract getTableInfo(
     tableName: string
   ): Promise<EntitySchemaDefinition | null>;
 
-  // Các phương thức connect được implement ở ConnectionFactory
   async connect(config: DbConfig): Promise<IConnection> {
     throw new Error("Connect method must be implemented by ConnectionFactory");
   }
@@ -57,17 +57,12 @@ export abstract class BaseAdapter implements IAdapter {
     return this.connection !== null && this.connection.isConnected;
   }
 
-  // Method này sẽ được override bởi ConnectionFactory
   isSupported(): boolean {
     return false;
   }
 
   getConnection(): IConnection | null {
     return this.connection;
-  }
-
-  beginTransaction(): Promise<Transaction> {
-    throw new Error("Method not implemented.");
   }
 
   protected ensureConnected(): void {
@@ -77,20 +72,38 @@ export abstract class BaseAdapter implements IAdapter {
   }
 
   // Schema Management
-  async alterTable(
+  async createTable(
     tableName: string,
-    changes: SchemaDefinition
+    schema: SchemaDefinition
   ): Promise<void> {
     this.ensureConnected();
+    const columns: string[] = [];
+    const constraints: string[] = [];
 
-    for (const [fieldName, fieldDef] of Object.entries(changes)) {
+    for (const [fieldName, fieldDef] of Object.entries(schema)) {
       const columnDef = this.buildColumnDefinition(fieldName, fieldDef);
-      const query = `ALTER TABLE ${QueryHelper.quoteIdentifier(
-        tableName,
-        this.type
-      )} ADD COLUMN ${columnDef}`;
-      await this.raw(query);
+      columns.push(columnDef);
+      if (fieldDef.references) {
+        constraints.push(this.buildForeignKeyConstraint(fieldName, fieldDef));
+      }
     }
+
+    const allColumns = [...columns, ...constraints].join(", ");
+    const query = this.buildCreateTableQuery(tableName, allColumns);
+    await this.raw(query);
+  }
+
+  alterTable(tableName: string, changes: SchemaDefinition): Promise<void> {
+    throw new Error("Method not implemented.");
+  }
+
+  async dropTable(tableName: string): Promise<void> {
+    this.ensureConnected();
+    const query = `DROP TABLE IF EXISTS ${QueryHelper.quoteIdentifier(
+      tableName,
+      this.type
+    )}`;
+    await this.raw(query);
   }
 
   async truncateTable(tableName: string): Promise<void> {
@@ -100,6 +113,294 @@ export abstract class BaseAdapter implements IAdapter {
       this.type
     )}`;
     await this.raw(query);
+  }
+
+  // CRUD Operations
+  async insertOne(tableName: string, data: any): Promise<any> {
+    this.ensureConnected();
+    const keys = Object.keys(data);
+    const values = Object.values(data);
+    const placeholders = this.buildPlaceholders(keys.length);
+    const quotedKeys = keys
+      .map((k) => QueryHelper.quoteIdentifier(k, this.type))
+      .join(", ");
+    const query = `INSERT INTO ${QueryHelper.quoteIdentifier(
+      tableName,
+      this.type
+    )} (${quotedKeys}) VALUES (${placeholders}) RETURNING *`;
+    const result = await this.raw(query, values);
+    return result.rows?.[0] || data;
+  }
+
+  async insertMany(tableName: string, data: any[]): Promise<any[]> {
+    this.ensureConnected();
+    if (data.length === 0) return [];
+    const results = [];
+    for (const item of data) {
+      results.push(await this.insertOne(tableName, item));
+    }
+    return results;
+  }
+
+  async find(
+    tableName: string,
+    filter: QueryFilter,
+    options?: QueryOptions
+  ): Promise<any[]> {
+    this.ensureConnected();
+    const { clause, params } = QueryHelper.buildWhereClause(filter, this.type);
+    const selectFields = QueryHelper.buildSelectFields(
+      options?.select || options?.fields || [],
+      this.type
+    );
+    let query = `SELECT ${selectFields} FROM ${QueryHelper.quoteIdentifier(
+      tableName,
+      this.type
+    )}`;
+    if (clause !== "1=1") query += ` WHERE ${clause}`;
+    if (options?.sort || options?.orderBy) {
+      const orderBy = QueryHelper.buildOrderBy(
+        options.sort || options.orderBy || {},
+        this.type
+      );
+      query += ` ORDER BY ${orderBy}`;
+    }
+    if (options?.limit) query += ` LIMIT ${options.limit}`;
+    if (options?.offset || options?.skip)
+      query += ` OFFSET ${options.offset || options.skip}`;
+    const result = await this.raw(query, params);
+    return result.rows || [];
+  }
+
+  async findOne(
+    tableName: string,
+    filter: QueryFilter,
+    options?: QueryOptions
+  ): Promise<any | null> {
+    const results = await this.find(tableName, filter, {
+      ...options,
+      limit: 1,
+    });
+    return results[0] || null;
+  }
+
+  async findById(tableName: string, id: any): Promise<any | null> {
+    return this.findOne(tableName, { id } as QueryFilter);
+  }
+
+  async update(
+    tableName: string,
+    filter: QueryFilter,
+    data: any
+  ): Promise<number> {
+    this.ensureConnected();
+    const keys = Object.keys(data);
+    const values = Object.values(data);
+    const setClauses = keys
+      .map(
+        (key, i) =>
+          `${QueryHelper.quoteIdentifier(
+            key,
+            this.type
+          )} = ${this.getParamPlaceholder(i + 1)}`
+      )
+      .join(", ");
+    const { clause, params: whereParams } = QueryHelper.buildWhereClause(
+      filter,
+      this.type,
+      keys.length + 1
+    );
+    const allParams = [...values, ...whereParams];
+    let query = `UPDATE ${QueryHelper.quoteIdentifier(
+      tableName,
+      this.type
+    )} SET ${setClauses}`;
+    if (clause !== "1=1") query += ` WHERE ${clause}`;
+    const result = await this.raw(query, allParams);
+    return result.rowsAffected || 0;
+  }
+
+  async updateOne(
+    tableName: string,
+    filter: QueryFilter,
+    data: any
+  ): Promise<boolean> {
+    const count = await this.update(tableName, filter, data);
+    return count > 0;
+  }
+
+  async updateById(tableName: string, id: any, data: any): Promise<boolean> {
+    return this.updateOne(tableName, { id } as QueryFilter, data);
+  }
+
+  async delete(tableName: string, filter: QueryFilter): Promise<number> {
+    this.ensureConnected();
+    const { clause, params } = QueryHelper.buildWhereClause(filter, this.type);
+    let query = `DELETE FROM ${QueryHelper.quoteIdentifier(
+      tableName,
+      this.type
+    )}`;
+    if (clause !== "1=1") query += ` WHERE ${clause}`;
+    const result = await this.raw(query, params);
+    return result.rowsAffected || 0;
+  }
+
+  async deleteOne(tableName: string, filter: QueryFilter): Promise<boolean> {
+    const count = await this.delete(tableName, filter);
+    return count > 0;
+  }
+
+  async deleteById(tableName: string, id: any): Promise<boolean> {
+    return this.deleteOne(tableName, { id } as QueryFilter);
+  }
+
+  async count(tableName: string, filter?: QueryFilter): Promise<number> {
+    this.ensureConnected();
+    const { clause, params } = QueryHelper.buildWhereClause(
+      filter || {},
+      this.type
+    );
+    let query = `SELECT COUNT(*) as count FROM ${QueryHelper.quoteIdentifier(
+      tableName,
+      this.type
+    )}`;
+    if (clause !== "1=1") query += ` WHERE ${clause}`;
+    const result = await this.raw(query, params);
+    return parseInt(result.rows?.[0]?.count || "0");
+  }
+
+  async raw(query: string | any, params?: any[]): Promise<any> {
+    this.ensureConnected();
+    return this.executeRaw(query, params);
+  }
+
+  async beginTransaction(): Promise<Transaction> {
+    this.ensureConnected();
+    await this.raw("BEGIN");
+    let active = true;
+    return {
+      commit: async () => {
+        if (!active) throw new Error("Transaction already completed");
+        await this.raw("COMMIT");
+        active = false;
+      },
+      rollback: async () => {
+        if (!active) throw new Error("Transaction already completed");
+        await this.raw("ROLLBACK");
+        active = false;
+      },
+      isActive: () => active,
+    };
+  }
+
+  // Utility Methods
+  sanitize(value: any): any {
+    if (typeof value === "string") return value.replace(/'/g, "''");
+    return value;
+  }
+
+  protected buildColumnDefinition(
+    fieldName: string,
+    fieldDef: FieldDefinition
+  ): string {
+    const quotedName = QueryHelper.quoteIdentifier(fieldName, this.type);
+    let sqlType = TypeMapper.mapType(fieldDef.type, this.type);
+    if (fieldDef.length && !fieldDef.type.includes("text"))
+      sqlType += `(${fieldDef.length})`;
+    let columnDef = `${quotedName} ${sqlType}`;
+    if (fieldDef.primaryKey) columnDef += " PRIMARY KEY";
+    if (fieldDef.autoIncrement)
+      columnDef = this.buildAutoIncrementColumn(quotedName, sqlType);
+    if (fieldDef.required && !fieldDef.primaryKey) columnDef += " NOT NULL";
+    if (fieldDef.unique) columnDef += " UNIQUE";
+    if (fieldDef.default !== undefined)
+      columnDef += ` DEFAULT ${this.formatDefaultValue(fieldDef.default)}`;
+    return columnDef;
+  }
+
+  protected buildAutoIncrementColumn(name: string, type: string): string {
+    switch (this.type) {
+      case "postgresql":
+        return `${name} SERIAL`;
+      case "mysql":
+      case "mariadb":
+        return `${name} ${type} AUTO_INCREMENT`;
+      case "sqlite":
+        return `${name} INTEGER PRIMARY KEY AUTOINCREMENT`;
+      case "sqlserver":
+        return `${name} ${type} IDENTITY(1,1)`;
+      default:
+        return `${name} ${type}`;
+    }
+  }
+
+  protected buildForeignKeyConstraint(
+    fieldName: string,
+    fieldDef: FieldDefinition
+  ): string {
+    if (!fieldDef.references) return "";
+    const quotedField = QueryHelper.quoteIdentifier(fieldName, this.type);
+    const quotedRefTable = QueryHelper.quoteIdentifier(
+      fieldDef.references.table,
+      this.type
+    );
+    const quotedRefField = QueryHelper.quoteIdentifier(
+      fieldDef.references.field,
+      this.type
+    );
+    let constraint = `FOREIGN KEY (${quotedField}) REFERENCES ${quotedRefTable}(${quotedRefField})`;
+    if (fieldDef.references.onDelete)
+      constraint += ` ON DELETE ${fieldDef.references.onDelete}`;
+    if (fieldDef.references.onUpdate)
+      constraint += ` ON UPDATE ${fieldDef.references.onUpdate}`;
+    return constraint;
+  }
+
+  protected buildCreateTableQuery(tableName: string, columns: string): string {
+    return `CREATE TABLE IF NOT EXISTS ${QueryHelper.quoteIdentifier(
+      tableName,
+      this.type
+    )} (${columns})`;
+  }
+
+  protected formatDefaultValue(value: any): string {
+    if (value === null) return "NULL";
+    if (typeof value === "string") {
+      if (
+        value.toUpperCase() === "NOW()" ||
+        value.toUpperCase() === "CURRENT_TIMESTAMP"
+      ) {
+        return "CURRENT_TIMESTAMP";
+      }
+      return `'${this.sanitize(value)}'`;
+    }
+    if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
+    return String(value);
+  }
+
+  protected buildPlaceholders(count: number): string {
+    const placeholders: string[] = [];
+    for (let i = 1; i <= count; i++) {
+      placeholders.push(this.getParamPlaceholder(i));
+    }
+    return placeholders.join(", ");
+  }
+
+  protected getParamPlaceholder(index: number): string {
+    switch (this.type) {
+      case "postgresql":
+        return `$${index}`;
+      case "oracle":
+        return `:${index}`;
+      case "mysql":
+      case "mariadb":
+      case "sqlite":
+        return "?";
+      case "sqlserver":
+        return `@p${index}`;
+      default:
+        return "?";
+    }
   }
 
   // Index Management
@@ -127,50 +428,6 @@ export abstract class BaseAdapter implements IAdapter {
     await this.raw(query);
   }
 
-  // CRUD Operations
-
-  async insertMany(tableName: string, data: any[]): Promise<any[]> {
-    this.ensureConnected();
-
-    if (data.length === 0) return [];
-
-    const results = [];
-    for (const item of data) {
-      results.push(await this.insertOne(tableName, item));
-    }
-
-    return results;
-  }
-
-  async findOne(
-    tableName: string,
-    filter: QueryFilter,
-    options?: QueryOptions
-  ): Promise<any | null> {
-    const results = await this.find(tableName, filter, {
-      ...options,
-      limit: 1,
-    });
-    return results[0] || null;
-  }
-
-  async findById(tableName: string, id: any): Promise<any | null> {
-    return this.findOne(tableName, { id } as QueryFilter);
-  }
-
-  async updateOne(
-    tableName: string,
-    filter: QueryFilter,
-    data: any
-  ): Promise<boolean> {
-    const count = await this.update(tableName, filter, data);
-    return count > 0;
-  }
-
-  async updateById(tableName: string, id: any, data: any): Promise<boolean> {
-    return this.updateOne(tableName, { id } as QueryFilter, data);
-  }
-
   async upsert(
     tableName: string,
     filter: QueryFilter,
@@ -184,36 +441,6 @@ export abstract class BaseAdapter implements IAdapter {
     } else {
       return await this.insertOne(tableName, { ...filter, ...data });
     }
-  }
-
-  async deleteOne(tableName: string, filter: QueryFilter): Promise<boolean> {
-    const count = await this.delete(tableName, filter);
-    return count > 0;
-  }
-
-  async deleteById(tableName: string, id: any): Promise<boolean> {
-    return this.deleteOne(tableName, { id } as QueryFilter);
-  }
-
-  async count(tableName: string, filter?: QueryFilter): Promise<number> {
-    this.ensureConnected();
-
-    const { clause, params } = QueryHelper.buildWhereClause(
-      filter || {},
-      this.type
-    );
-
-    let query = `SELECT COUNT(*) as count FROM ${QueryHelper.quoteIdentifier(
-      tableName,
-      this.type
-    )}`;
-
-    if (clause !== "1=1") {
-      query += ` WHERE ${clause}`;
-    }
-
-    const result = await this.raw(query, params);
-    return parseInt(result.rows?.[0]?.count || "0");
   }
 
   async exists(tableName: string, filter: QueryFilter): Promise<boolean> {
@@ -315,236 +542,144 @@ export abstract class BaseAdapter implements IAdapter {
       metadata: result,
     };
   }
-
-  async createTable(
-    tableName: string,
-    schema: SchemaDefinition
-  ): Promise<void> {
-    this.ensureConnected();
-    const columns: string[] = [];
-    const constraints: string[] = [];
-
-    for (const [fieldName, fieldDef] of Object.entries(schema)) {
-      const columnDef = this.buildColumnDefinition(fieldName, fieldDef);
-      columns.push(columnDef);
-      if (fieldDef.references) {
-        constraints.push(this.buildForeignKeyConstraint(fieldName, fieldDef));
-      }
-    }
-
-    const allColumns = [...columns, ...constraints].join(", ");
-    const query = this.buildCreateTableQuery(tableName, allColumns);
-    await this.raw(query);
-  }
-
-  async dropTable(tableName: string): Promise<void> {
-    this.ensureConnected();
-    const query = `DROP TABLE IF EXISTS ${QueryHelper.quoteIdentifier(
-      tableName,
-      this.type
-    )}`;
-    await this.raw(query);
-  }
-
-  async insertOne(tableName: string, data: any): Promise<any> {
-    this.ensureConnected();
-    const keys = Object.keys(data);
-    const values = Object.values(data);
-    const placeholders = this.buildPlaceholders(keys.length);
-    const quotedKeys = keys
-      .map((k) => QueryHelper.quoteIdentifier(k, this.type))
-      .join(", ");
-    const query = `INSERT INTO ${QueryHelper.quoteIdentifier(
-      tableName,
-      this.type
-    )} (${quotedKeys}) VALUES (${placeholders}) RETURNING *`;
-    const result = await this.raw(query, values);
-    return result.rows?.[0] || data;
-  }
-
-  async find(
-    tableName: string,
-    filter: QueryFilter,
-    options?: QueryOptions
-  ): Promise<any[]> {
-    this.ensureConnected();
-    const { clause, params } = QueryHelper.buildWhereClause(filter, this.type);
-    const selectFields = QueryHelper.buildSelectFields(
-      options?.select || options?.fields || [],
-      this.type
-    );
-    let query = `SELECT ${selectFields} FROM ${QueryHelper.quoteIdentifier(
-      tableName,
-      this.type
-    )}`;
-    if (clause !== "1=1") query += ` WHERE ${clause}`;
-    if (options?.sort || options?.orderBy) {
-      const orderBy = QueryHelper.buildOrderBy(
-        options.sort || options.orderBy || {},
-        this.type
-      );
-      query += ` ORDER BY ${orderBy}`;
-    }
-    if (options?.limit) query += ` LIMIT ${options.limit}`;
-    if (options?.offset || options?.skip)
-      query += ` OFFSET ${options.offset || options.skip}`;
-    const result = await this.raw(query, params);
-    return result.rows || [];
-  }
-
-  async update(
-    tableName: string,
-    filter: QueryFilter,
-    data: any
-  ): Promise<number> {
-    this.ensureConnected();
-    const keys = Object.keys(data);
-    const values = Object.values(data);
-    const setClauses = keys
-      .map(
-        (key, i) =>
-          `${QueryHelper.quoteIdentifier(
-            key,
-            this.type
-          )} = ${this.getParamPlaceholder(i + 1)}`
-      )
-      .join(", ");
-    const { clause, params: whereParams } = QueryHelper.buildWhereClause(
-      filter,
-      this.type,
-      keys.length + 1
-    );
-    const allParams = [...values, ...whereParams];
-    let query = `UPDATE ${QueryHelper.quoteIdentifier(
-      tableName,
-      this.type
-    )} SET ${setClauses}`;
-    if (clause !== "1=1") query += ` WHERE ${clause}`;
-    const result = await this.raw(query, allParams);
-    return result.rowsAffected || 0;
-  }
-
-  async delete(tableName: string, filter: QueryFilter): Promise<number> {
-    this.ensureConnected();
-    const { clause, params } = QueryHelper.buildWhereClause(filter, this.type);
-    let query = `DELETE FROM ${QueryHelper.quoteIdentifier(
-      tableName,
-      this.type
-    )}`;
-    if (clause !== "1=1") query += ` WHERE ${clause}`;
-    const result = await this.raw(query, params);
-    return result.rowsAffected || 0;
-  }
-
-  async raw(query: string | any, params?: any[]): Promise<any> {
-    this.ensureConnected();
-    return this.executeRaw(query, params);
-  }
-
-  protected buildColumnDefinition(
-    fieldName: string,
-    fieldDef: FieldDefinition
-  ): string {
-    const quotedName = QueryHelper.quoteIdentifier(fieldName, this.type);
-    let sqlType = TypeMapper.mapType(fieldDef.type, this.type);
-    if (fieldDef.length && !fieldDef.type.includes("text"))
-      sqlType += `(${fieldDef.length})`;
-    let columnDef = `${quotedName} ${sqlType}`;
-    if (fieldDef.primaryKey) columnDef += " PRIMARY KEY";
-    if (fieldDef.autoIncrement)
-      columnDef = this.buildAutoIncrementColumn(quotedName, sqlType);
-    if (fieldDef.required) columnDef += " NOT NULL";
-    if (fieldDef.unique) columnDef += " UNIQUE";
-    if (fieldDef.default !== undefined)
-      columnDef += ` DEFAULT ${this.formatDefaultValue(fieldDef.default)}`;
-    return columnDef;
-  }
-
-  protected buildAutoIncrementColumn(name: string, type: string): string {
-    switch (this.type) {
-      case "postgresql":
-        return `${name} SERIAL`;
-      case "mysql":
-      case "mariadb":
-        return `${name} ${type} AUTO_INCREMENT`;
-      case "sqlite":
-        return `${name} INTEGER PRIMARY KEY AUTOINCREMENT`;
-      case "sqlserver":
-        return `${name} ${type} IDENTITY(1,1)`;
-      default:
-        return `${name} ${type}`;
-    }
-  }
-
-  protected buildForeignKeyConstraint(
-    fieldName: string,
-    fieldDef: FieldDefinition
-  ): string {
-    if (!fieldDef.references) return "";
-    const quotedField = QueryHelper.quoteIdentifier(fieldName, this.type);
-    const quotedRefTable = QueryHelper.quoteIdentifier(
-      fieldDef.references.table,
-      this.type
-    );
-    const quotedRefField = QueryHelper.quoteIdentifier(
-      fieldDef.references.field,
-      this.type
-    );
-    let constraint = `FOREIGN KEY (${quotedField}) REFERENCES ${quotedRefTable}(${quotedRefField})`;
-    if (fieldDef.references.onDelete)
-      constraint += ` ON DELETE ${fieldDef.references.onDelete}`;
-    if (fieldDef.references.onUpdate)
-      constraint += ` ON UPDATE ${fieldDef.references.onUpdate}`;
-    return constraint;
-  }
-
-  protected buildCreateTableQuery(tableName: string, columns: string): string {
-    return `CREATE TABLE IF NOT EXISTS ${QueryHelper.quoteIdentifier(
-      tableName,
-      this.type
-    )} (${columns})`;
-  }
-
-  protected formatDefaultValue(value: any): string {
-    if (value === null) return "NULL";
-    if (typeof value === "string") {
-      if (
-        value.toUpperCase() === "NOW()" ||
-        value.toUpperCase() === "CURRENT_TIMESTAMP"
-      ) {
-        return "CURRENT_TIMESTAMP";
-      }
-      return `'${this.sanitize(value)}'`;
-    }
-    if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
-    return String(value);
-  }
-
-  protected buildPlaceholders(count: number): string {
-    const placeholders: string[] = [];
-    for (let i = 1; i <= count; i++) {
-      placeholders.push(this.getParamPlaceholder(i));
-    }
-    return placeholders.join(", ");
-  }
-
-  protected getParamPlaceholder(index: number): string {
-    switch (this.type) {
-      case "postgresql":
-        return `$${index}`;
-      case "mysql":
-      case "mariadb":
-      case "sqlite":
-        return "?";
-      case "sqlserver":
-        return `@p${index}`;
-      default:
-        return "?";
-    }
-  }
-
-  sanitize(value: any): any {
-    if (typeof value === "string") return value.replace(/'/g, "''");
-    return value;
-  }
 }
+
+// ========================
+// EXAMPLE USAGE
+// ========================
+
+/*
+// File: user-app/src/database/setup.ts
+
+import { AdapterHelper } from "@dqcai/orm/helpers";
+import { PostgreSQLConnectionFactory } from "@dqcai/orm/factories";
+import { MySQLConnectionFactory } from "@dqcai/orm/factories";
+import { MongoDBConnectionFactory } from "@dqcai/orm/factories";
+
+// Example 1: PostgreSQL
+async function setupPostgreSQL() {
+  const adapter = await AdapterHelper.createAdapter(
+    "postgresql",
+    {
+      host: "localhost",
+      port: 5432,
+      database: "mydb",
+      username: "user",
+      password: "pass"
+    },
+    new PostgreSQLConnectionFactory()
+  );
+  
+  return adapter;
+}
+
+// Example 2: MySQL
+async function setupMySQL() {
+  const adapter = await AdapterHelper.createAdapter(
+    "mysql",
+    {
+      host: "localhost",
+      port: 3306,
+      database: "mydb",
+      user: "root",
+      password: "pass"
+    },
+    new MySQLConnectionFactory()
+  );
+  
+  return adapter;
+}
+
+// Example 3: MongoDB
+async function setupMongoDB() {
+  const adapter = await AdapterHelper.createAdapter(
+    "mongodb",
+    {
+      url: "mongodb://localhost:27017",
+      database: "mydb"
+    },
+    new MongoDBConnectionFactory()
+  );
+  
+  return adapter;
+}
+
+// Example 4: SQLite
+async function setupSQLite() {
+  const adapter = await AdapterHelper.createAdapter(
+    "sqlite",
+    {
+      filename: "./data/mydb.sqlite"
+    },
+    new SQLiteConnectionFactory()
+  );
+  
+  return adapter;
+}
+
+// Example 5: Oracle
+async function setupOracle() {
+  const adapter = await AdapterHelper.createAdapter(
+    "oracle",
+    {
+      user: "system",
+      password: "oracle",
+      connectString: "localhost:1521/XE"
+    },
+    new OracleConnectionFactory()
+  );
+  
+  return adapter;
+}
+
+// Example 6: SQL Server
+async function setupSQLServer() {
+  const adapter = await AdapterHelper.createAdapter(
+    "sqlserver",
+    {
+      server: "localhost",
+      database: "mydb",
+      user: "sa",
+      password: "YourStrong@Passw0rd",
+      options: {
+        encrypt: true,
+        trustServerCertificate: true
+      }
+    },
+    new SQLServerConnectionFactory()
+  );
+  
+  return adapter;
+}
+
+// Example 7: Using adapter
+async function exampleUsage() {
+  const adapter = await setupPostgreSQL();
+  
+  // Create table
+  await adapter.createTable("users", {
+    id: { type: "integer", primaryKey: true, autoIncrement: true },
+    name: { type: "string", length: 100, required: true },
+    email: { type: "string", length: 255, unique: true },
+    created_at: { type: "timestamp", default: "CURRENT_TIMESTAMP" }
+  });
+  
+  // Insert data
+  const user = await adapter.insertOne("users", {
+    name: "John Doe",
+    email: "john@example.com"
+  });
+  
+  // Find data
+  const users = await adapter.find("users", { name: "John Doe" });
+  
+  // Update data
+  await adapter.updateById("users", user.id, { name: "Jane Doe" });
+  
+  // Delete data
+  await adapter.deleteById("users", user.id);
+  
+  // Disconnect
+  await adapter.disconnect();
+}
+*/

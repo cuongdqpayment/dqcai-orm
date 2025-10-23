@@ -203,7 +203,7 @@ export interface DbConfig {
   user?: string; // Alias for username
   password?: string;
   dbDirectory?: string; // For SQLite
-  options?: Record<string, any>;
+  options?: Record<string, any> | string;
   ssl?: boolean | object;
   poolSize?: number;
   timeout?: number;

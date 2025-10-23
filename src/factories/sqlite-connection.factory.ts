@@ -1,9 +1,11 @@
-
-// ./src/factories/sqlite-connection.factory.ts
+// ========================
+// src/factories/sqlite-connection.factory.ts
+// ========================
 
 import { BaseAdapter } from "../core/base-adapter";
 import { IConnection } from "../types/orm.types";
 import { IConnectionFactory } from "./connection-factory.interface";
+import { SQLiteConfig } from "../types/database-config-types";
 
 export class SQLiteConnectionFactory implements IConnectionFactory {
   isSupported(): boolean {
@@ -11,11 +13,16 @@ export class SQLiteConnectionFactory implements IConnectionFactory {
       require.resolve("better-sqlite3");
       return true;
     } catch {
-      return false;
+      try {
+        require.resolve("sqlite3");
+        return true;
+      } catch {
+        return false;
+      }
     }
   }
 
-  async connect(adapter: BaseAdapter, config: any): Promise<IConnection> {
+  async connect(adapter: BaseAdapter, config: SQLiteConfig): Promise<IConnection> {
     try {
       const Database = (await import("better-sqlite3")).default;
       const filename = config.memory

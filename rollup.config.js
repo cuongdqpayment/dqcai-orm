@@ -5,25 +5,25 @@ import commonjs from "@rollup/plugin-commonjs";
 import esbuild from "rollup-plugin-esbuild";
 
 export default {
-  input: "src/index.ts", 
+  input: "src/index.ts",
   external: [],
   output: [
     {
-      file: "lib/index.js", 
+      file: "lib/index.js",
       format: "cjs",
-      sourcemap: true, 
+      sourcemap: false, // tắt sourcemap không làm lộ code gốc
       exports: "auto",
     },
     {
-      file: "lib/index.mjs", 
+      file: "lib/index.mjs",
       format: "esm",
-      sourcemap: true,
+      sourcemap: false,
     },
     {
-      file: "lib/index.umd.js", 
+      file: "lib/index.umd.js",
       format: "umd",
-      name: "DQCAIMongoDB",
-      sourcemap: true,
+      name: "@dqcai/orm",
+      sourcemap: false,
     },
   ],
   plugins: [
@@ -36,11 +36,16 @@ export default {
       declarationDir: "lib",
       declarationMap: true, // Tạo .d.ts.map để debug
       rootDir: "src",
+      noEmitHelpers: true,
+      importHelpers: false,
+      target: "ES2017", // Tăng target lên
     }), // Biên dịch TypeScript
     esbuild({
-      minify: true,
+      minify: true, // dùng minify bằng obfuscate thay vì dùng plugin của rollup
       target: "es2017", // Target ES version phù hợp: ES2017+ cho modern browsers // RN 0.60+
+      charset: "utf8",
+      legalComments: "none",
     }),
   ],
-  external: ['mongodb'] // MongoDB nên là external dependency
+  external: [], // ['mongodb'] -MongoDB nên là external dependency
 };

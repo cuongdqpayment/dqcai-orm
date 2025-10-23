@@ -1,8 +1,14 @@
-// ./src/helpers/adapter-helper.ts
+// ========================
+// src/helpers/adapter-helper.ts
+// ========================
+
+import { MariaDBAdapter } from "../adapters/mariadb-adapter";
 import { MongoDBAdapter } from "../adapters/mongodb-adapter";
 import { MySQLAdapter } from "../adapters/mysql-adapter";
+import { OracleAdapter } from "../adapters/oracle-adapter";
 import { PostgreSQLAdapter } from "../adapters/postgresql-adapter";
 import { SQLiteAdapter } from "../adapters/sqlite-adapter";
+import { SQLServerAdapter } from "../adapters/sqlserver-adapter";
 import { BaseAdapter } from "../core/base-adapter";
 import { IConnectionFactory } from "../factories/connection-factory.interface";
 import { DatabaseType, DbConfig } from "../types/orm.types";
@@ -22,11 +28,20 @@ export class AdapterHelper {
       case "mysql":
         adapter = new MySQLAdapter();
         break;
+      case "mariadb":
+        adapter = new MariaDBAdapter();
+        break;
       case "mongodb":
         adapter = new MongoDBAdapter();
         break;
       case "sqlite":
         adapter = new SQLiteAdapter();
+        break;
+      case "oracle":
+        adapter = new OracleAdapter();
+        break;
+      case "sqlserver":
+        adapter = new SQLServerAdapter();
         break;
       default:
         throw new Error(`Unsupported database type: ${type}`);
@@ -40,10 +55,3 @@ export class AdapterHelper {
     return adapter;
   }
 }
-
-// Sử dụng:
-/* const adapter = await AdapterHelper.createAdapter(
-  "postgresql",
-  pgConfig,
-  new PostgreSQLConnectionFactory()
-); */

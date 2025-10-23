@@ -5,6 +5,7 @@
 import { BaseAdapter } from "../core/base-adapter";
 import { IConnection } from "../types/orm.types";
 import { IConnectionFactory } from "./connection-factory.interface";
+import { MongoDBConfig } from "../types/database-config-types";
 
 export class MongoDBConnectionFactory implements IConnectionFactory {
   isSupported(): boolean {
@@ -16,10 +17,11 @@ export class MongoDBConnectionFactory implements IConnectionFactory {
     }
   }
 
-  async connect(adapter: BaseAdapter, config: any): Promise<IConnection> {
+  async connect(adapter: BaseAdapter, config: MongoDBConfig): Promise<IConnection> {
     try {
-      const { MongoClient, ObjectId } = await import("mongodb") ;
-      const url = config.url || config.connectionString || "mongodb://localhost:27017";
+      const { MongoClient, ObjectId } = await import("mongodb");
+      const url =
+        config.url || config.connectionString || "mongodb://localhost:27017";
       const client = new MongoClient(url, config.options);
       await client.connect();
       const db = client.db(config.database);

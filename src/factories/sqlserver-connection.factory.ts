@@ -1,32 +1,35 @@
 // ========================
-// src/factories/mysql-connection.factory.ts
+// src/factories/sqlserver-connection.factory.ts
 // ========================
 
 import { BaseAdapter } from "../core/base-adapter";
 import { IConnection } from "../types/orm.types";
 import { IConnectionFactory } from "./connection-factory.interface";
-import { MySQLConfig } from "../types/database-config-types";
+import { SQLServerConfig } from "../types/database-config-types";
 
-export class MySQLConnectionFactory implements IConnectionFactory {
+export class SQLServerConnectionFactory implements IConnectionFactory {
   isSupported(): boolean {
     try {
-      require.resolve("mysql2");
+      require.resolve("mssql");
       return true;
     } catch {
       return false;
     }
   }
 
-  async connect(adapter: BaseAdapter, config: MySQLConfig): Promise<IConnection> {
+  async connect(
+    adapter: BaseAdapter,
+    config: SQLServerConfig
+  ): Promise<IConnection> {
     try {
-      const mysql = await import("mysql2/promise");
-      const pool = mysql.createPool(config);
+      const sql = await import("mssql");
+      const pool = await sql.connect(config);
 
       const connection: IConnection = {
         rawConnection: pool,
         isConnected: true,
         close: async () => {
-          await pool.end();
+          await pool.close();
         },
       };
 
@@ -36,7 +39,7 @@ export class MySQLConnectionFactory implements IConnectionFactory {
 
       return connection;
     } catch (error) {
-      throw new Error(`MySQL connection failed: ${error}`);
+      throw new Error(`SQL Server connection failed: ${error}`);
     }
   }
 }

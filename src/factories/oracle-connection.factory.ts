@@ -1,15 +1,12 @@
 // ========================
 // src/factories/oracle-connection.factory.ts
 // ========================
-import { OracleConfig } from "../adapters/oracle-adapter";
+
 import { BaseAdapter } from "../core/base-adapter";
 import { IConnection } from "../types/orm.types";
 import { IConnectionFactory } from "./connection-factory.interface";
+import { OracleConfig } from "../types/database-config-types";
 
-/**
- * PostgreSQL Connection Factory
- * File này sẽ được import trong ứng dụng người dùng, không nằm trong core library
- */
 export class OracleConnectionFactory implements IConnectionFactory {
   isSupported(): boolean {
     try {
@@ -20,21 +17,17 @@ export class OracleConnectionFactory implements IConnectionFactory {
     }
   }
 
-  async connect(
-    adapter: BaseAdapter,
-    config: OracleConfig
-  ): Promise<IConnection> {
+  async connect(adapter: BaseAdapter, config: OracleConfig): Promise<IConnection> {
     try {
       const oracledb = await import("oracledb");
-      // Set default fetch options
+
       oracledb.outFormat = oracledb.OUT_FORMAT_OBJECT;
       oracledb.fetchAsString = [oracledb.CLOB];
       oracledb.fetchAsBuffer = [oracledb.BLOB];
 
-      // Build connection string
       const connectString = this.buildConnectString(config);
 
-      let pool = await oracledb.createPool({
+      const pool = await oracledb.createPool({
         user: config.user || config.username,
         password: config.password,
         connectString: connectString,
@@ -47,7 +40,7 @@ export class OracleConnectionFactory implements IConnectionFactory {
         privilege: config.privilege,
       });
 
-      const connection = {
+      const connection: IConnection = {
         rawConnection: pool,
         isConnected: true,
         close: async () => {
@@ -57,7 +50,7 @@ export class OracleConnectionFactory implements IConnectionFactory {
         },
       };
 
-      // Set connection vào adapter
+      (adapter as any).oracledb = oracledb;
       (adapter as any).pool = pool;
       (adapter as any).connection = connection;
       (adapter as any).config = config;
@@ -68,16 +61,10 @@ export class OracleConnectionFactory implements IConnectionFactory {
     }
   }
 
-  private buildConnectString(config: OracleConfig): string {
-    // If connectString or connectionString is provided, use it
-    if (config.connectString) {
-      return config.connectString;
-    }
-    if (config.connectionString) {
-      return config.connectionString;
-    }
+  private buildConnectString(config: any): string {
+    if (config.connectString) return config.connectString;
+    if (config.connectionString) return config.connectionString;
 
-    // Build from components
     const host = config.host || "localhost";
     const port = config.port || 1521;
 
@@ -89,7 +76,6 @@ export class OracleConnectionFactory implements IConnectionFactory {
       return `${host}:${port}:${config.sid}`;
     }
 
-    // Default
     return `${host}:${port}/XE`;
   }
 }

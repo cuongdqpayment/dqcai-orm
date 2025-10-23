@@ -1,16 +1,13 @@
-
 // ========================
 // src/factories/postgresql-connection.factory.ts
 // ========================
 
 import { BaseAdapter } from "../core/base-adapter";
-import { DbConfig, IConnection } from "../types/orm.types";
+import { IConnection } from "../types/orm.types";
 import { IConnectionFactory } from "./connection-factory.interface";
+import { PostgreSQLConfig } from "../types/database-config-types";
+import { PoolConfig } from "pg";
 
-/**
- * PostgreSQL Connection Factory
- * File này sẽ được import trong ứng dụng người dùng, không nằm trong core library
- */
 export class PostgreSQLConnectionFactory implements IConnectionFactory {
   isSupported(): boolean {
     try {
@@ -21,10 +18,10 @@ export class PostgreSQLConnectionFactory implements IConnectionFactory {
     }
   }
 
-  async connect(adapter: BaseAdapter, config: DbConfig): Promise<IConnection> {
+  async connect(adapter: BaseAdapter, config: PostgreSQLConfig): Promise<IConnection> {
     try {
       const { Pool } = await import("pg");
-      const pool = new Pool(config as any);
+      const pool = new Pool(config as PoolConfig);
 
       const connection: IConnection = {
         rawConnection: pool,
@@ -34,7 +31,6 @@ export class PostgreSQLConnectionFactory implements IConnectionFactory {
         },
       };
 
-      // Set connection vào adapter
       (adapter as any).pool = pool;
       (adapter as any).connection = connection;
       (adapter as any).config = config;
