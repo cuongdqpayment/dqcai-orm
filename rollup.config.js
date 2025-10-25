@@ -1,51 +1,78 @@
+// rollup.config.js
 import json from "@rollup/plugin-json";
 import typescript from "@rollup/plugin-typescript";
 import { nodeResolve } from "@rollup/plugin-node-resolve";
 import commonjs from "@rollup/plugin-commonjs";
 import esbuild from "rollup-plugin-esbuild";
 
-export default {
+// ✅ QUAN TRỌNG: Phải mark database drivers là external
+// Vì chúng là peerDependencies (optional)
+const external = [
+  "pg",
+  "mysql2",
+  "mariadb",
+  "mongodb",
+  "better-sqlite3",
+  "oracledb",
+  "mssql",
+  "@dqcai/logger",
+];
+
+const plugins = [
+  json(),
+  nodeResolve({
+    preferBuiltins: true, // ✅ Ưu tiên Node.js built-in modules
+  }),
+  commonjs(),
+  typescript({
+    tsconfig: "./tsconfig.json",
+    declaration: true,
+    declarationDir: "lib",
+    declarationMap: true,
+    rootDir: "src",
+    noEmitHelpers: true,
+    importHelpers: false,
+    target: "ES2017",
+  }),
+  esbuild({
+    minify: true,
+    target: "es2017",
+    charset: "utf8",
+    legalComments: "none",
+  }),
+];
+
+export default // ==========================================
+// 1. MAIN BUNDLE - Core + Adapters + Types
+// ==========================================
+{
   input: "src/index.ts",
-  external: [],
   output: [
+    // CJS - Cho Node.js cũ và require()
     {
       file: "lib/index.js",
       format: "cjs",
-      sourcemap: false, // tắt sourcemap không làm lộ code gốc
-      exports: "auto",
+      sourcemap: true,
+      exports: "named", // ✅ Dùng "named" thay vì "auto" cho rõ ràng
     },
+    // ESM - Cho modern Node.js và bundlers (tree-shaking)
     {
       file: "lib/index.mjs",
       format: "esm",
-      sourcemap: false,
+      sourcemap: true,
     },
+    // UMD - Chỉ nếu cần browser/CDN support
+    // ⚠️ Nếu thư viện chỉ dùng cho backend Node.js thì XÓA phần này
     {
       file: "lib/index.umd.js",
       format: "umd",
-      name: "@dqcai/orm",
-      sourcemap: false,
+      name: "DQCAIORM", // ✅ Không dùng @ trong UMD name
+      sourcemap: true,
+      globals: {
+        "@dqcai/logger": "DQCAILogger", // ✅ Define globals cho external deps
+      },
     },
   ],
-  plugins: [
-    json(), // Thêm plugin này
-    nodeResolve(), // Giải quyết các phụ thuộc node_modules
-    commonjs(), // Chuyển đổi CommonJS sang ESM nếu cần
-    typescript({
-      tsconfig: "./tsconfig.json",
-      declaration: true,
-      declarationDir: "lib",
-      declarationMap: true, // Tạo .d.ts.map để debug
-      rootDir: "src",
-      noEmitHelpers: true,
-      importHelpers: false,
-      target: "ES2017", // Tăng target lên
-    }), // Biên dịch TypeScript
-    esbuild({
-      minify: true, // dùng minify bằng obfuscate thay vì dùng plugin của rollup
-      target: "es2017", // Target ES version phù hợp: ES2017+ cho modern browsers // RN 0.60+
-      charset: "utf8",
-      legalComments: "none",
-    }),
-  ],
-  external: [], // ['mongodb'] -MongoDB nên là external dependency
+  plugins,
+  external,
 };

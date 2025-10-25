@@ -10,7 +10,7 @@ import { MongoDBConfig } from "../types/database-config-types";
 export class MongoDBConnectionFactory implements IConnectionFactory {
   isSupported(): boolean {
     try {
-      require.resolve("mongodb");
+      require.resolve("mongodb");   // ✅ Chỉ check, không import
       return true;
     } catch {
       return false;
@@ -19,7 +19,8 @@ export class MongoDBConnectionFactory implements IConnectionFactory {
 
   async connect(adapter: BaseAdapter, config: MongoDBConfig): Promise<IConnection> {
     try {
-      const { MongoClient, ObjectId } = await import("mongodb");
+      // ✅ QUAN TRỌNG: Dynamic import - chỉ load khi gọi connect() nên có thể khai theo file index.ts bên ngoài gom chung được
+      const { MongoClient, ObjectId } = await import("mongodb"); 
       const url =
         config.url || config.connectionString || "mongodb://localhost:27017";
       const client = new MongoClient(url, config.options);
