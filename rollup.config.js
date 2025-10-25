@@ -52,26 +52,26 @@ export default // ==========================================
     {
       file: "lib/index.js",
       format: "cjs",
-      sourcemap: true,
+      inlineDynamicImports: true, //  Inline dynamic imports (nếu muốn giữ 1 file)
+      sourcemap: false,
       exports: "named", // ✅ Dùng "named" thay vì "auto" cho rõ ràng
     },
     // ESM - Cho modern Node.js và bundlers (tree-shaking)
     {
       file: "lib/index.mjs",
       format: "esm",
-      sourcemap: true,
+      inlineDynamicImports: true, //  Inline dynamic imports (nếu muốn giữ 1 file)
+      sourcemap: false,
     },
     // UMD - Chỉ nếu cần browser/CDN support
     // ⚠️ Nếu thư viện chỉ dùng cho backend Node.js thì XÓA phần này
-    {
+    /* {
       file: "lib/index.umd.js",
       format: "umd",
+      inlineDynamicImports: true, //  Inline dynamic imports (nếu muốn giữ 1 file)
       name: "DQCAIORM", // ✅ Không dùng @ trong UMD name
       sourcemap: true,
-      globals: {
-        "@dqcai/logger": "DQCAILogger", // ✅ Define globals cho external deps
-      },
-    },
+    }, */
   ],
   plugins,
   external,

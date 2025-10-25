@@ -72,7 +72,7 @@
     "@types/pg": "^8.15.5",
     "better-sqlite3": "^12.4.1",
     "esbuild": "^0.25.9",
-    "javascript-obfuscator": "^0.6.2",
+    "javascript-obfuscator": "^4.1.1",
     "mariadb": "^3.0.0",
     "mongodb": "^6.0.0",
     "mssql": "^12.0.0",
