@@ -6,7 +6,7 @@ export * from "./types";
 export * from "./adapters";
 // Factory Connection for layzy load (await import("") is ok)
 export * from "./factories";
-export { AdapterHelper } from "./helpers/adapter-helper";
+export * from "./helpers";
 
 // Core Classes
 export { BaseAdapter } from "./core/base-adapter";

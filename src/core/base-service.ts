@@ -1,16 +1,14 @@
-
 // ========================
 // src/core/base-service.ts
 // ========================
 
-import { UniversalDAO } from './universal-dao';
-import { DatabaseManager } from './database-manager';
-import { IResult, QueryFilter, QueryOptions, Transaction } from '../types/orm.types';
-import { ServiceStatus } from '../types/service.types';
-
+import { UniversalDAO } from "./universal-dao";
+import { DatabaseManager } from "./database-manager";
+import { IResult, QueryFilter, QueryOptions, Transaction } from "../types/orm.types";
+import { ServiceStatus } from "../types/service.types";
 
 /**
- * Base Service - Abstract class for entity-specific services
+ * Base Service - REFACTORED với khả năng truy cập DAO dễ dàng hơn
  */
 export abstract class BaseService<TModel = any> {
   protected dao: UniversalDAO<any> | null = null;
@@ -24,11 +22,14 @@ export abstract class BaseService<TModel = any> {
     this.entityName = entityName;
   }
 
+  // ==================== INITIALIZATION ====================
+
   /**
-   * Initialize service by getting DAO from DatabaseManager
+   * Khởi tạo service
    */
   public async initialize(): Promise<void> {
     this.lastAccess = Date.now();
+    
     if (this.dao && this.dao.getAdapter().isConnected()) {
       return;
     }
@@ -37,25 +38,77 @@ export abstract class BaseService<TModel = any> {
       this.dao = await DatabaseManager.getDAO(this.schemaKey);
       this.isOpened = true;
     } catch (error) {
-      throw new Error(`Failed to initialize service ${this.schemaKey}:${this.entityName}: ${error}`);
+      throw new Error(
+        `Failed to initialize service ${this.schemaKey}:${this.entityName}: ${error}`
+      );
     }
   }
 
+  /**
+   * Đảm bảo service đã được khởi tạo
+   */
+  protected async ensureInitialized(): Promise<void> {
+    if (!this.dao || !this.isOpened) {
+      await this.initialize();
+    }
+  }
+
+  /**
+   * Lấy DAO (protected)
+   */
   protected getDAO(): UniversalDAO<any> {
     if (!this.dao || !this.isOpened) {
-      throw new Error(`Service not initialized or DAO closed for ${this.schemaKey}:${this.entityName}`);
+      throw new Error(
+        `Service not initialized for ${this.schemaKey}:${this.entityName}`
+      );
     }
     return this.dao;
   }
 
-  // --- CRUD Operations ---
+  // ==================== PUBLIC DAO ACCESS ====================
+
+  /**
+   * Lấy UniversalDAO để tương tác trực tiếp với database
+   * @returns UniversalDAO instance
+   */
+  public async getUniversalDAO(): Promise<UniversalDAO<any>> {
+    await this.ensureInitialized();
+    return this.getDAO();
+  }
+
+  /**
+   * Thực thi truy vấn raw thông qua DAO
+   */
+  public async executeRaw(query: string | any, params?: any[]): Promise<IResult> {
+    this.lastAccess = Date.now();
+    return this.getDAO().execute(query, params);
+  }
+
+  /**
+   * Lấy adapter từ DAO
+   */
+  public getAdapter(): any {
+    return this.getDAO().getAdapter();
+  }
+
+  /**
+   * Lấy schema từ DAO
+   */
+  public getSchema(): any {
+    return this.getDAO().getSchema();
+  }
+
+  // ==================== CRUD OPERATIONS ====================
 
   public async find(query: QueryFilter = {}, options?: QueryOptions): Promise<TModel[]> {
     this.lastAccess = Date.now();
     return this.getDAO().find<TModel>(this.entityName, query, options);
   }
 
-  public async findOne(query: QueryFilter, options?: QueryOptions): Promise<TModel | null> {
+  public async findOne(
+    query: QueryFilter,
+    options?: QueryOptions
+  ): Promise<TModel | null> {
     this.lastAccess = Date.now();
     return this.getDAO().findOne<TModel>(this.entityName, query, options);
   }
@@ -67,7 +120,9 @@ export abstract class BaseService<TModel = any> {
 
   public async create(data: Partial<TModel>): Promise<TModel> {
     this.lastAccess = Date.now();
-    return this.getDAO().insert<TModel>(this.entityName, data);
+    const processedData = await this.beforeCreate(data);
+    const result = await this.getDAO().insert<TModel>(this.entityName, processedData);
+    return this.afterCreate(result);
   }
 
   public async createMany(data: Partial<TModel>[]): Promise<TModel[]> {
@@ -77,12 +132,19 @@ export abstract class BaseService<TModel = any> {
 
   public async update(filter: QueryFilter, data: Partial<TModel>): Promise<number> {
     this.lastAccess = Date.now();
-    return this.getDAO().update(this.entityName, filter, data);
+    const processedData = await this.beforeUpdate(filter, data);
+    const count = await this.getDAO().update(this.entityName, filter, processedData);
+    await this.afterUpdate(count);
+    return count;
   }
 
-  public async updateOne(filter: QueryFilter, data: Partial<TModel>): Promise<boolean> {
+  public async updateOne(
+    filter: QueryFilter,
+    data: Partial<TModel>
+  ): Promise<boolean> {
     this.lastAccess = Date.now();
-    return this.getDAO().updateOne(this.entityName, filter, data);
+    const processedData = await this.beforeUpdate(filter, data);
+    return this.getDAO().updateOne(this.entityName, filter, processedData);
   }
 
   public async updateById(id: any, data: Partial<TModel>): Promise<boolean> {
@@ -92,11 +154,15 @@ export abstract class BaseService<TModel = any> {
 
   public async delete(filter: QueryFilter): Promise<number> {
     this.lastAccess = Date.now();
-    return this.getDAO().delete(this.entityName, filter);
+    await this.beforeDelete(filter);
+    const count = await this.getDAO().delete(this.entityName, filter);
+    await this.afterDelete(count);
+    return count;
   }
 
   public async deleteOne(filter: QueryFilter): Promise<boolean> {
     this.lastAccess = Date.now();
+    await this.beforeDelete(filter);
     return this.getDAO().deleteOne(this.entityName, filter);
   }
 
@@ -116,7 +182,7 @@ export abstract class BaseService<TModel = any> {
     return count > 0;
   }
 
-  // --- Advanced Operations ---
+  // ==================== ADVANCED OPERATIONS ====================
 
   public async execute(query: string | any, params?: any[]): Promise<IResult> {
     this.lastAccess = Date.now();
@@ -128,7 +194,7 @@ export abstract class BaseService<TModel = any> {
     return this.getDAO().getAdapter().beginTransaction();
   }
 
-  // --- Hooks (Override in subclasses) ---
+  // ==================== HOOKS ====================
 
   protected async beforeCreate(data: Partial<TModel>): Promise<Partial<TModel>> {
     return data;
@@ -138,7 +204,10 @@ export abstract class BaseService<TModel = any> {
     return result;
   }
 
-  protected async beforeUpdate(filter: QueryFilter, data: Partial<TModel>): Promise<Partial<TModel>> {
+  protected async beforeUpdate(
+    filter: QueryFilter,
+    data: Partial<TModel>
+  ): Promise<Partial<TModel>> {
     return data;
   }
 
@@ -154,7 +223,7 @@ export abstract class BaseService<TModel = any> {
     // Hook for after delete
   }
 
-  // --- Status & Lifecycle ---
+  // ==================== STATUS & LIFECYCLE ====================
 
   public getStatus(): ServiceStatus {
     const daoStatus = this.dao?.getStatus(this.entityName) || {};
@@ -165,13 +234,12 @@ export abstract class BaseService<TModel = any> {
       isInitialized: !!this.dao,
       hasDao: !!this.dao,
       lastAccess: new Date(this.lastAccess).toISOString(),
-      ...daoStatus
+      ...daoStatus,
     } as ServiceStatus;
   }
 
   public async close(): Promise<void> {
     this.isOpened = false;
-    // Don't close DAO here - it's managed by DatabaseManager
   }
 
   public destroy(): void {
@@ -187,4 +255,3 @@ export abstract class BaseService<TModel = any> {
     return this.schemaKey;
   }
 }
-

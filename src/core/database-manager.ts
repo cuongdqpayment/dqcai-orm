@@ -10,15 +10,15 @@ import {
   DbFactoryOptions,
 } from "../types/service.types";
 import { DatabaseSchema } from "../types/orm.types";
+import { IAdapter } from "../interfaces/adapter.interface";
 
 /**
- * Database Manager (Singleton)
+ * Database Manager (Singleton) - REFACTORED
  */
 export class DatabaseManager {
   private static instance: DatabaseManager;
-  private static schemaConfigurations: Record<string, DatabaseSchema> = {};
   private static roleRegistry: RoleRegistry = {};
-  private static connections: Record<string, UniversalDAO<any>> = {};
+  private static daoCache: Map<string, UniversalDAO<any>> = new Map();
 
   private constructor() {}
 
@@ -29,77 +29,117 @@ export class DatabaseManager {
     return DatabaseManager.instance;
   }
 
-  // --- Schema Management ---
+  // ==================== SCHEMA MANAGEMENT ====================
+  // Delegate to DatabaseFactory
 
   public static registerSchema(key: string, schema: DatabaseSchema): void {
-    this.schemaConfigurations[key] = schema;
+    DatabaseFactory.registerSchema(key, schema);
+  }
+
+  public static registerSchemas(schemas: Record<string, DatabaseSchema>): void {
+    DatabaseFactory.registerSchemas(schemas);
   }
 
   public static getSchema(key: string): DatabaseSchema | undefined {
-    return this.schemaConfigurations[key];
+    return DatabaseFactory.getSchema(key);
   }
 
-  public static getAllSchemas(): Record<string, DatabaseSchema> {
-    return { ...this.schemaConfigurations };
+  public static getAllSchemas(): Map<string, DatabaseSchema> {
+    return DatabaseFactory.getAllSchemas();
   }
 
   public static hasSchema(key: string): boolean {
-    return key in this.schemaConfigurations;
+    return DatabaseFactory.hasSchema(key);
   }
 
-  // --- Connection/DAO Management ---
+  // ==================== ADAPTER MANAGEMENT ====================
 
+  /**
+   * Đăng ký adapter instance cho schema
+   */
+  public static registerAdapterInstance(
+    schemaKey: string,
+    adapter: IAdapter<any>
+  ): void {
+    DatabaseFactory.registerAdapterInstance(schemaKey, adapter);
+  }
+
+  /**
+   * Lấy adapter instance
+   */
+  public static getAdapterInstance(schemaKey: string): IAdapter<any> | undefined {
+    return DatabaseFactory.getAdapterInstance(schemaKey);
+  }
+
+  // ==================== DAO MANAGEMENT ====================
+
+  /**
+   * Lấy hoặc tạo DAO cho schema
+   */
   public static async getDAO(
     schemaKey: string,
     options?: Partial<DbFactoryOptions>
   ): Promise<UniversalDAO<any>> {
-    const existingDAO = this.connections[schemaKey];
-    if (existingDAO && existingDAO.getAdapter().isConnected()) {
-      return existingDAO;
+    // 1. Kiểm tra cache
+    const cachedDAO = this.daoCache.get(schemaKey);
+    if (cachedDAO && cachedDAO.getAdapter().isConnected()) {
+      return cachedDAO;
     }
 
-    const schema = this.getSchema(schemaKey);
-    if (!schema) {
-      throw new Error(`Database schema not found for key: ${schemaKey}`);
-    }
-
-    const factoryOptions: DbFactoryOptions = {
-      config: schema,
-      ...options,
-    };
-
-    const newDAO = await DatabaseFactory.createOrOpen(factoryOptions);
-    this.connections[schemaKey] = newDAO;
+    // 2. Tạo DAO mới từ DatabaseFactory
+    const newDAO = await DatabaseFactory.createDAO(schemaKey, options);
+    
+    // 3. Lưu vào cache
+    this.daoCache.set(schemaKey, newDAO);
 
     return newDAO;
   }
 
-  public static getConnection(
-    schemaKey: string
-  ): UniversalDAO<any> | undefined {
-    return this.connections[schemaKey];
+  /**
+   * Lấy DAO từ cache (không tạo mới)
+   */
+  public static getCachedDAO(schemaKey: string): UniversalDAO<any> | undefined {
+    return this.daoCache.get(schemaKey);
   }
 
-  public static async closeConnection(schemaKey: string): Promise<void> {
-    const dao = this.connections[schemaKey];
+  /**
+   * Đóng và xóa DAO khỏi cache
+   */
+  public static async closeDAO(schemaKey: string): Promise<void> {
+    const dao = this.daoCache.get(schemaKey);
     if (dao) {
       await dao.close();
-      delete this.connections[schemaKey];
+      this.daoCache.delete(schemaKey);
     }
+    
+    // Xóa adapter instance
+    await DatabaseFactory.unregisterAdapterInstance(schemaKey);
   }
 
-  public static async closeAllConnections(): Promise<void> {
-    const closePromises = Object.keys(this.connections).map((key) =>
-      this.closeConnection(key)
+  /**
+   * Đóng tất cả DAOs
+   */
+  public static async closeAllDAOs(): Promise<void> {
+    const closePromises = Array.from(this.daoCache.keys()).map((key) =>
+      this.closeDAO(key)
     );
     await Promise.all(closePromises);
   }
 
-  public static getAllConnections(): Record<string, UniversalDAO<any>> {
-    return { ...this.connections };
+  /**
+   * Lấy tất cả DAOs đang cached
+   */
+  public static getAllDAOs(): Map<string, UniversalDAO<any>> {
+    return new Map(this.daoCache);
   }
 
-  // --- Role Management ---
+  // Compatibility aliases
+  public static getConnection = this.getCachedDAO;
+  public static closeConnection = this.closeDAO;
+  public static closeAllConnections = this.closeAllDAOs;
+  public static getAllConnections = this.getAllDAOs;
+
+  // ==================== ROLE MANAGEMENT ====================
 
   public static registerRole(roleConfig: RoleConfig): void {
     this.roleRegistry[roleConfig.roleName] = roleConfig;
@@ -128,7 +168,10 @@ export class DatabaseManager {
     };
   }
 
-  public static async initializeUserRoleConnections(
+  /**
+   * Khởi tạo connections cho role
+   */
+  public static async initializeRoleConnections(
     roleName: string,
     initOptional: boolean = false
   ): Promise<UniversalDAO<any>[]> {
@@ -144,7 +187,7 @@ export class DatabaseManager {
       } catch (error) {
         console.error(`Failed to initialize connection for ${dbKey}:`, error);
         if (required.includes(dbKey)) {
-          throw error; // Required databases must connect
+          throw error;
         }
       }
     }
@@ -152,39 +195,52 @@ export class DatabaseManager {
     return daos;
   }
 
-  public static getCurrentUserDatabases(roleName: string): string[] {
+  // Compatibility alias
+  public static initializeUserRoleConnections = this.initializeRoleConnections;
+
+  /**
+   * Lấy danh sách databases đã kết nối cho role
+   */
+  public static getActiveDatabases(roleName: string): string[] {
     const { required, optional } = this.getRoleDatabases(roleName);
     const allDatabases = [...required, ...optional];
 
     return allDatabases.filter((dbKey) => {
-      const dao = this.connections[dbKey];
+      const dao = this.daoCache.get(dbKey);
       return dao && dao.getAdapter().isConnected();
     });
   }
 
-  // --- Status & Health ---
+  // Compatibility alias
+  public static getCurrentUserDatabases = this.getActiveDatabases;
+
+  // ==================== STATUS & HEALTH ====================
 
   public static getStatus(): {
     schemas: number;
-    connections: number;
+    daos: number;
     roles: number;
     activeConnections: string[];
+    adapterInstances: number;
   } {
+    const factoryStats = DatabaseFactory.getStats();
+    
     return {
-      schemas: Object.keys(this.schemaConfigurations).length,
-      connections: Object.keys(this.connections).length,
+      schemas: factoryStats.schemas,
+      daos: this.daoCache.size,
       roles: Object.keys(this.roleRegistry).length,
-      activeConnections: Object.keys(this.connections).filter((key) => {
-        const dao = this.connections[key];
+      activeConnections: Array.from(this.daoCache.keys()).filter((key) => {
+        const dao = this.daoCache.get(key);
         return dao && dao.getAdapter().isConnected();
       }),
+      adapterInstances: factoryStats.adapterInstances,
     };
   }
 
   public static async healthCheck(): Promise<Record<string, boolean>> {
     const health: Record<string, boolean> = {};
 
-    for (const [key, dao] of Object.entries(this.connections)) {
+    for (const [key, dao] of this.daoCache.entries()) {
       try {
         await dao.ensureConnected();
         health[key] = dao.getAdapter().isConnected();
@@ -196,9 +252,12 @@ export class DatabaseManager {
     return health;
   }
 
+  /**
+   * Reset toàn bộ manager
+   */
   public static reset(): void {
-    this.schemaConfigurations = {};
     this.roleRegistry = {};
-    this.connections = {};
+    this.daoCache.clear();
+    DatabaseFactory.reset();
   }
 }
