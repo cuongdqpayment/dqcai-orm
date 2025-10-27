@@ -196,9 +196,16 @@ export class QueryHelper {
       }
     }
 
+    // Sanitize params before returning
+    const sanitizedParams = params.map((p) => {
+      if (p instanceof Date) return p.toISOString();
+      if (typeof p === "boolean" && dbType === "sqlite") return p ? 1 : 0;
+      return p;
+    });
+
     return {
       clause: conditions.join(" AND ") || "1=1",
-      params,
+      params: sanitizedParams,
     };
   }
 

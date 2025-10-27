@@ -116,10 +116,15 @@ export abstract class BaseAdapter implements IAdapter {
   }
 
   // CRUD Operations
+
+  // Cập nhật insertOne method
   async insertOne(tableName: string, data: any): Promise<any> {
     this.ensureConnected();
     const keys = Object.keys(data);
-    const values = Object.values(data);
+
+    // ✅ Sanitize all values
+    const values = Object.values(data).map((v) => this.sanitizeValue(v));
+
     const placeholders = this.buildPlaceholders(keys.length);
     const quotedKeys = keys
       .map((k) => QueryHelper.quoteIdentifier(k, this.type))
@@ -188,6 +193,7 @@ export abstract class BaseAdapter implements IAdapter {
     return this.findOne(tableName, { id } as QueryFilter);
   }
 
+  // Cập nhật update method
   async update(
     tableName: string,
     filter: QueryFilter,
@@ -195,7 +201,10 @@ export abstract class BaseAdapter implements IAdapter {
   ): Promise<number> {
     this.ensureConnected();
     const keys = Object.keys(data);
-    const values = Object.values(data);
+
+    // ✅ Sanitize all values
+    const values = Object.values(data).map((v) => this.sanitizeValue(v));
+
     const setClauses = keys
       .map(
         (key, i) =>
@@ -296,6 +305,32 @@ export abstract class BaseAdapter implements IAdapter {
   // Utility Methods
   sanitize(value: any): any {
     if (typeof value === "string") return value.replace(/'/g, "''");
+    return value;
+  }
+
+  // Thêm vào file base-adapter.ts
+
+  protected sanitizeValue(value: any): any {
+    // Handle Date objects
+    if (value instanceof Date) {
+      return value.toISOString();
+    }
+
+    // Handle boolean for SQLite
+    if (typeof value === "boolean" && this.type === "sqlite") {
+      return value ? 1 : 0;
+    }
+
+    // Handle null/undefined
+    if (value === null || value === undefined) {
+      return null;
+    }
+
+    // Handle arrays/objects (stringify)
+    if (typeof value === "object") {
+      return JSON.stringify(value);
+    }
+
     return value;
   }
 
