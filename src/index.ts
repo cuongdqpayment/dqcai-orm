@@ -8,6 +8,9 @@ export * from "./adapters";
 export * from "./factories";
 export * from "./helpers";
 
+// Logger
+export * from "./logger";
+
 // Core Classes
 export { BaseAdapter } from "./core/base-adapter";
 export { UniversalDAO } from "./core/universal-dao";

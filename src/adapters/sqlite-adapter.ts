@@ -5,6 +5,8 @@
 import { BaseAdapter } from "../core/base-adapter";
 import { DatabaseType, EntitySchemaDefinition } from "../types/orm.types";
 import { QueryHelper } from "../utils/query-helper";
+import { createModuleLogger, ORMModules } from "../logger";
+const logger = createModuleLogger(ORMModules.SQLITE3_ADAPTER);
 
 export class SQLiteAdapter extends BaseAdapter {
   type: DatabaseType = "sqlite";
@@ -22,31 +24,43 @@ export class SQLiteAdapter extends BaseAdapter {
    * - Object/Array → JSON String
    */
   protected sanitizeValue(value: any): any {
+    logger.trace("Sanitizing value", { valueType: typeof value, value: value });
+
     // Handle null/undefined
     if (value === null || value === undefined) {
+      logger.trace("Value is null/undefined, returning null");
       return null;
     }
 
     // Handle Date objects → ISO String
     if (value instanceof Date) {
-      return value.toISOString();
+      const isoString = value.toISOString();
+      logger.trace("Converted Date to ISO string");
+      return isoString;
     }
 
     // Handle boolean → 1/0
     if (typeof value === "boolean") {
-      return value ? 1 : 0;
+      const numericValue = value ? 1 : 0;
+      logger.trace("Converted Boolean to numeric", { original: value, converted: numericValue });
+      return numericValue;
     }
 
     // Handle arrays/objects → JSON stringify
     if (typeof value === "object" && !Buffer.isBuffer(value)) {
-      return JSON.stringify(value);
+      const jsonString = JSON.stringify(value);
+      logger.trace("Converted object/array to JSON string", { length: jsonString.length });
+      return jsonString;
     }
 
     // Handle strings (escape single quotes)
     if (typeof value === "string") {
-      return value.replace(/'/g, "''");
+      const escapedValue = value.replace(/'/g, "''");
+      logger.trace("Escaped string value");
+      return escapedValue;
     }
 
+    logger.trace("Value is primitive, returning as-is");
     return value;
   }
 
@@ -55,6 +69,8 @@ export class SQLiteAdapter extends BaseAdapter {
    * SQLite chỉ có: NULL, INTEGER, REAL, TEXT, BLOB
    */
   protected mapFieldTypeToDBType(fieldType: string, length?: number): string {
+    logger.trace("Mapping field type to SQLite", { fieldType, length });
+
     const typeMap: Record<string, string> = {
       // String types
       string: length ? `VARCHAR(${length})` : "TEXT",
@@ -94,7 +110,10 @@ export class SQLiteAdapter extends BaseAdapter {
       blob: "BLOB",
     };
 
-    return typeMap[fieldType.toLowerCase()] || "TEXT";
+    const mappedType = typeMap[fieldType.toLowerCase()] || "TEXT";
+    logger.trace("Mapped type result", { fieldType, mappedType });
+
+    return mappedType;
   }
 
   /**
@@ -107,9 +126,15 @@ export class SQLiteAdapter extends BaseAdapter {
     data: any,
     primaryKeys?: string[]
   ): Promise<any> {
+    logger.debug("Processing insert result", { 
+      tableName, 
+      hasLastInsertId: !!result.lastInsertId || !!result.lastInsertRowid 
+    });
+
     const lastInsertId = result.lastInsertId || result.lastInsertRowid;
 
     if (!lastInsertId) {
+      logger.warn("No last insert ID available, returning original data");
       return data; // Fallback nếu không có ID
     }
 
@@ -120,14 +145,25 @@ export class SQLiteAdapter extends BaseAdapter {
       this.type
     )} WHERE ${QueryHelper.quoteIdentifier(pkField, this.type)} = ?`;
 
+    logger.trace("Executing select query for inserted record", { pkField, lastInsertId });
+
     const selectResult = await this.executeRaw(query, [lastInsertId]);
-    return selectResult.rows?.[0] || { ...data, [pkField]: lastInsertId };
+    const insertedRecord = selectResult.rows?.[0] || { ...data, [pkField]: lastInsertId };
+
+    logger.trace("Insert result processed", { 
+      tableName, 
+      pkField, 
+      lastInsertId 
+    });
+
+    return insertedRecord;
   }
 
   /**
    * ✅ SQLITE: Placeholder = ?
    */
   protected getPlaceholder(index: number): string {
+    logger.trace("Getting SQLite placeholder", { index });
     return "?";
   }
 
@@ -136,38 +172,66 @@ export class SQLiteAdapter extends BaseAdapter {
   // ==========================================
 
   async executeRaw(query: string, params?: any[]): Promise<any> {
-    if (!this.db) throw new Error("Not connected to SQLite");
+    logger.trace("Executing raw SQLite query", { 
+      querySnippet: query.substring(0, Math.min(100, query.length)) + (query.length > 100 ? '...' : ''), 
+      paramsCount: params?.length || 0 
+    });
+
+    if (!this.db) {
+      logger.error("Not connected to SQLite");
+      throw new Error("Not connected to SQLite");
+    }
 
     // Sanitize params trước khi execute
     const sanitizedParams = params?.map((p) => this.sanitizeValue(p));
 
     if (query.trim().toUpperCase().startsWith("SELECT")) {
+      logger.trace("Executing SELECT query");
       const rows = this.db.prepare(query).all(sanitizedParams);
-      return { rows, rowCount: rows.length };
+      const result = { rows, rowCount: rows.length };
+      logger.trace("SELECT query executed", { rowCount: rows.length });
+      return result;
     } else {
+      logger.trace("Executing non-SELECT query");
       const info = this.db.prepare(query).run(sanitizedParams);
-      return {
+      const result = {
         rows: [],
         rowCount: info.changes,
         rowsAffected: info.changes,
         lastInsertId: info.lastInsertRowid,
         lastInsertRowid: info.lastInsertRowid,
       };
+      logger.trace("Non-SELECT query executed", { 
+        changes: info.changes, 
+        lastInsertRowid: info.lastInsertRowid 
+      });
+      return result;
     }
   }
 
   async tableExists(tableName: string): Promise<boolean> {
+    logger.trace("Checking table existence", { tableName });
+
     const query = `SELECT COUNT(*) as count FROM sqlite_master WHERE type='table' AND name=?`;
     const result = await this.executeRaw(query, [tableName]);
-    return result.rows[0]?.count > 0;
+    const exists = result.rows[0]?.count > 0;
+
+    logger.trace("Table existence check result", { tableName, exists });
+
+    return exists;
   }
 
   async getTableInfo(
     tableName: string
   ): Promise<EntitySchemaDefinition | null> {
+    logger.debug("Getting table info", { tableName });
+
     const query = `PRAGMA table_info(${tableName})`;
     const result = await this.executeRaw(query);
-    if (result.rows.length === 0) return null;
+    if (result.rows.length === 0) {
+      logger.debug("No table info found");
+      return null;
+    }
 
     const cols = result.rows.map((row: any) => ({
       name: row.name,
@@ -177,11 +241,21 @@ export class SQLiteAdapter extends BaseAdapter {
       primaryKey: row.pk === 1,
     }));
 
-    return { name: tableName, cols };
+    const tableInfo = { name: tableName, cols };
+
+    logger.debug("Table info retrieved", { 
+      tableName, 
+      columnCount: cols.length 
+    });
+
+    return tableInfo;
   }
 
   protected buildAutoIncrementColumn(name: string, type: string): string {
-    return `${name} INTEGER PRIMARY KEY AUTOINCREMENT`;
+    logger.trace("Building auto-increment column", { name, type });
+    const autoIncrementColumn = `${name} INTEGER PRIMARY KEY AUTOINCREMENT`;
+    logger.trace("Auto-increment column built", { autoIncrementColumn });
+    return autoIncrementColumn;
   }
 
   // ==========================================
@@ -192,6 +266,11 @@ export class SQLiteAdapter extends BaseAdapter {
    * 🔄 OVERRIDE: SQLite cần xử lý đặc biệt cho RETURNING
    */
   async insertOne(tableName: string, data: any): Promise<any> {
+    logger.debug("Inserting one record", { 
+      tableName, 
+      dataKeys: Object.keys(data) 
+    });
+
     this.ensureConnected();
     const keys = Object.keys(data);
 
@@ -209,9 +288,22 @@ export class SQLiteAdapter extends BaseAdapter {
       this.type
     )} (${quotedKeys}) VALUES (${placeholders})`;
 
+    logger.trace("Executing insert query", { 
+      tableName, 
+      keyCount: keys.length,
+      placeholderCount: placeholders.split(',').length 
+    });
+
     const result = await this.executeRaw(query, values);
 
     // ✅ Process result (query lại)
-    return this.processInsertResult(tableName, result, data, ["id"]);
+    const insertedRecord = await this.processInsertResult(tableName, result, data, ["id"]);
+
+    logger.info("Inserted one record successfully", { 
+      tableName, 
+      insertedId: insertedRecord.id 
+    });
+
+    return insertedRecord;
   }
 }

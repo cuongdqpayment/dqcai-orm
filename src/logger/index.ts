@@ -23,6 +23,13 @@ const ORMModules = {
   SQLITE3_ADAPTER: "Sqlite3Adapter",
   SQLSERVER_ADAPTER: "SQLServerAdapter",
   ORACLE_ADAPTER: "OracleAdapter",
+  MONGODB_CONNECTION_FACTORY: "MongoDBConnectionFactory",
+  POSTGRESQL_CONNECTION_FACTORY: "PostgreSQLConnectionFactory",
+  MYSQL_CONNECTION_FACTORY: "MySQLConnectionFactory",
+  MARIADB_CONNECTION_FACTORY: "MariaDBConnectionFactory",
+  SQLITE3_CONNECTION_FACTORY: "Sqlite3ConnectionFactory",
+  SQLSERVER_CONNECTION_FACTORY: "SQLServerConnectionFactory",
+  ORACLE_CONNECTION_FACTORY: "OracleConnectionFactory",
 };
 
 const config = new LoggerConfigBuilder()

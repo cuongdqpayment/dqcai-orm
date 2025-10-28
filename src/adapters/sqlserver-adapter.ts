@@ -5,6 +5,8 @@
 import { BaseAdapter } from "../core/base-adapter";
 import { DatabaseType, EntitySchemaDefinition } from "../types/orm.types";
 import { QueryHelper } from "../utils/query-helper";
+import { createModuleLogger, ORMModules } from "../logger";
+const logger = createModuleLogger(ORMModules.SQLSERVER_ADAPTER);
 
 export class SQLServerAdapter extends BaseAdapter {
   type: DatabaseType = "sqlserver";
@@ -22,32 +24,43 @@ export class SQLServerAdapter extends BaseAdapter {
    * - Object/Array → JSON stringify (NVARCHAR(MAX))
    */
   protected sanitizeValue(value: any): any {
+    logger.trace("Sanitizing value", { valueType: typeof value });
+
     // Handle null/undefined
     if (value === null || value === undefined) {
+      logger.trace("Value is null/undefined, returning null");
       return null;
     }
 
     // Handle Date objects → SQL Server datetime format
     if (value instanceof Date) {
-      // SQL Server prefers 'YYYY-MM-DD HH:MM:SS.mmm'
-      return value.toISOString().slice(0, 23).replace('T', ' ');
+      const formattedDate = value.toISOString().slice(0, 23).replace('T', ' ');
+      logger.trace("Converted Date to SQL Server datetime format");
+      return formattedDate;
     }
 
     // Handle boolean → 1/0
     if (typeof value === "boolean") {
-      return value ? 1 : 0;
+      const numericValue = value ? 1 : 0;
+      logger.trace("Converted Boolean to numeric", { original: value, converted: numericValue });
+      return numericValue;
     }
 
     // Handle arrays/objects → JSON stringify
     if (typeof value === "object" && !Buffer.isBuffer(value)) {
-      return JSON.stringify(value);
+      const jsonString = JSON.stringify(value);
+      logger.trace("Converted object/array to JSON string", { length: jsonString.length });
+      return jsonString;
     }
 
     // Handle strings (escape single quotes)
     if (typeof value === "string") {
-      return value.replace(/'/g, "''");
+      const escapedValue = value.replace(/'/g, "''");
+      logger.trace("Escaped string value");
+      return escapedValue;
     }
 
+    logger.trace("Value is primitive, returning as-is");
     return value;
   }
 
@@ -55,6 +68,8 @@ export class SQLServerAdapter extends BaseAdapter {
    * ✅ SQL SERVER: Ánh xạ kiểu dữ liệu
    */
   protected mapFieldTypeToDBType(fieldType: string, length?: number): string {
+    logger.trace("Mapping field type to SQL Server", { fieldType, length });
+
     const typeMap: Record<string, string> = {
       // String types
       string: length ? `NVARCHAR(${length})` : "NVARCHAR(255)",
@@ -94,7 +109,10 @@ export class SQLServerAdapter extends BaseAdapter {
       blob: "VARBINARY(MAX)",
     };
 
-    return typeMap[fieldType.toLowerCase()] || "NVARCHAR(255)";
+    const mappedType = typeMap[fieldType.toLowerCase()] || "NVARCHAR(255)";
+    logger.trace("Mapped type result", { fieldType, mappedType });
+
+    return mappedType;
   }
 
   /**
@@ -107,9 +125,16 @@ export class SQLServerAdapter extends BaseAdapter {
     data: any,
     primaryKeys?: string[]
   ): Promise<any> {
+    logger.debug("Processing insert result", { 
+      tableName, 
+      hasRows: !!result.rows?.length 
+    });
+
     // Nếu có OUTPUT INSERTED.*, result sẽ chứa row
     if (result.rows && result.rows.length > 0) {
-      return result.rows[0];
+      const processedRow = result.rows[0];
+      logger.trace("Using OUTPUT INSERTED.* row");
+      return processedRow;
     }
 
     // Fallback: Query lại bằng SCOPE_IDENTITY()
@@ -117,10 +142,12 @@ export class SQLServerAdapter extends BaseAdapter {
     
     // Lấy SCOPE_IDENTITY() (last inserted ID)
     const identityQuery = `SELECT SCOPE_IDENTITY() AS id`;
+    logger.trace("Executing SCOPE_IDENTITY query");
     const identityResult = await this.executeRaw(identityQuery);
     const lastInsertId = identityResult.rows[0]?.id;
 
     if (!lastInsertId) {
+      logger.warn("No insert ID available, returning original data", { tableName });
       return data;
     }
 
@@ -130,14 +157,25 @@ export class SQLServerAdapter extends BaseAdapter {
       this.type
     )} WHERE ${QueryHelper.quoteIdentifier(pkField, this.type)} = @p1`;
 
+    logger.trace("Executing select query for inserted record", { pkField, lastInsertId });
+
     const selectResult = await this.executeRaw(query, [lastInsertId]);
-    return selectResult.rows?.[0] || { ...data, [pkField]: lastInsertId };
+    const insertedRecord = selectResult.rows?.[0] || { ...data, [pkField]: lastInsertId };
+
+    logger.trace("Insert result processed via fallback query", { 
+      tableName, 
+      pkField, 
+      lastInsertId 
+    });
+
+    return insertedRecord;
   }
 
   /**
    * ✅ SQL SERVER: Placeholder = @p1, @p2, @p3...
    */
   protected getPlaceholder(index: number): string {
+    logger.trace("Getting SQL Server placeholder", { index });
     return `@p${index}`;
   }
 
@@ -146,31 +184,55 @@ export class SQLServerAdapter extends BaseAdapter {
   // ==========================================
 
   async executeRaw(query: string, params?: any[]): Promise<any> {
-    if (!this.pool) throw new Error("Not connected to SQL Server");
+    logger.trace("Executing raw SQL Server query", { 
+      querySnippet: query.substring(0, Math.min(100, query.length)) + (query.length > 100 ? '...' : ''), 
+      paramsCount: params?.length || 0 
+    });
+
+    if (!this.pool) {
+      logger.error("Not connected to SQL Server");
+      throw new Error("Not connected to SQL Server");
+    }
     
     const request = this.pool.request();
     
     // Bind parameters
     params?.forEach((param, index) => {
+      logger.trace("Binding parameter", { index: index + 1, paramType: typeof param });
       request.input(`p${index + 1}`, param);
     });
     
     const result = await request.query(query);
     
-    return {
+    const formattedResult = {
       rows: result.recordset || [],
       rowCount: result.rowsAffected?.[0] || 0,
       rowsAffected: result.rowsAffected?.[0] || 0,
     };
+
+    logger.trace("Raw query executed", { 
+      rowCount: formattedResult.rows.length, 
+      rowsAffected: formattedResult.rowsAffected 
+    });
+
+    return formattedResult;
   }
 
   async tableExists(tableName: string): Promise<boolean> {
+    logger.trace("Checking table existence", { tableName });
+
     const query = `SELECT COUNT(*) as count FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = @p1`;
     const result = await this.executeRaw(query, [tableName]);
-    return result.rows[0]?.count > 0;
+    const exists = result.rows[0]?.count > 0;
+
+    logger.trace("Table existence check result", { tableName, exists });
+
+    return exists;
   }
 
   async getTableInfo(tableName: string): Promise<EntitySchemaDefinition | null> {
+    logger.debug("Getting table info", { tableName });
+
     const query = `
       SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT
       FROM INFORMATION_SCHEMA.COLUMNS
@@ -178,7 +240,10 @@ export class SQLServerAdapter extends BaseAdapter {
       ORDER BY ORDINAL_POSITION
     `;
     const result = await this.executeRaw(query, [tableName]);
-    if (result.rows.length === 0) return null;
+    if (result.rows.length === 0) {
+      logger.debug("No table info found", { tableName });
+      return null;
+    }
 
     const cols = result.rows.map((row: any) => ({
       name: row.COLUMN_NAME,
@@ -187,11 +252,21 @@ export class SQLServerAdapter extends BaseAdapter {
       default: row.COLUMN_DEFAULT,
     }));
 
-    return { name: tableName, cols };
+    const tableInfo = { name: tableName, cols };
+
+    logger.debug("Table info retrieved", { 
+      tableName, 
+      columnCount: cols.length 
+    });
+
+    return tableInfo;
   }
 
   protected buildAutoIncrementColumn(name: string, type: string): string {
-    return `${name} ${type} IDENTITY(1,1)`;
+    logger.trace("Building auto-increment column", { name, type });
+    const autoIncrementColumn = `${name} ${type} IDENTITY(1,1)`;
+    logger.trace("Auto-increment column built", { autoIncrementColumn });
+    return autoIncrementColumn;
   }
 
   // ==========================================
@@ -202,6 +277,11 @@ export class SQLServerAdapter extends BaseAdapter {
    * 🔄 OVERRIDE: SQL Server hỗ trợ OUTPUT INSERTED.*
    */
   async insertOne(tableName: string, data: any): Promise<any> {
+    logger.debug("Inserting one record", { 
+      tableName, 
+      dataKeys: Object.keys(data) 
+    });
+
     this.ensureConnected();
     const keys = Object.keys(data);
 
@@ -219,9 +299,22 @@ export class SQLServerAdapter extends BaseAdapter {
       this.type
     )} (${quotedKeys}) OUTPUT INSERTED.* VALUES (${placeholders})`;
 
+    logger.trace("Executing insert query", { 
+      tableName, 
+      keyCount: keys.length,
+      placeholderCount: placeholders.split(',').length 
+    });
+
     const result = await this.executeRaw(query, values);
 
     // ✅ Process result
-    return this.processInsertResult(tableName, result, data, ["id"]);
+    const insertedRecord = await this.processInsertResult(tableName, result, data, ["id"]);
+
+    logger.info("Inserted one record successfully", { 
+      tableName, 
+      insertedId: insertedRecord.id 
+    });
+
+    return insertedRecord;
   }
 }

@@ -1,5 +1,5 @@
 // ========================
-// src/adapters/mongodb-adapter.ts (REFACTORED)
+// src/adapters/mongodb-adapter.ts (IMPROVED FROM @dqcai/mongo)
 // ========================
 
 import { BaseAdapter } from "../core/base-adapter";
@@ -11,7 +11,18 @@ import {
   SchemaDefinition,
   Transaction,
 } from "../types/orm.types";
+import { createModuleLogger, ORMModules } from "../logger";
+const logger = createModuleLogger(ORMModules.MONGODB_ADAPTER);
 
+/**
+ * 🎯 MongoDB Adapter - Học từ UniversalDAO của @dqcai/mongo
+ * 
+ * Key learnings:
+ * 1. MongoDB hỗ trợ BSON → giữ nguyên Date, Boolean, Object, Array
+ * 2. ObjectId conversion cho _id field
+ * 3. Query filter conversion (SQL-like → MongoDB query)
+ * 4. Schema validation với $jsonSchema
+ */
 export class MongoDBAdapter extends BaseAdapter {
   type: DatabaseType = "mongodb";
   databaseType: DatabaseType = "mongodb";
@@ -20,71 +31,94 @@ export class MongoDBAdapter extends BaseAdapter {
   private ObjectId: any = null;
 
   // ==========================================
-  // REQUIRED ABSTRACT METHOD IMPLEMENTATIONS
+  // ✅ SANITIZATION (LEARNED FROM @dqcai/mongo)
   // ==========================================
 
   /**
-   * ✅ MONGODB: Giữ nguyên kiểu dữ liệu JavaScript
-   * MongoDB hỗ trợ BSON nên không cần chuyển đổi nhiều
+   * 🔄 MongoDB sanitization - Giữ nguyên JS types vì BSON hỗ trợ
    */
   protected sanitizeValue(value: any): any {
-    // MongoDB hỗ trợ Date, Boolean native
-    // Chỉ cần xử lý ObjectId nếu cần
+    logger.trace("Sanitizing value", { valueType: typeof value });
+
     if (value === null || value === undefined) {
       return null;
     }
 
-    // Keep Date objects as-is (BSON supports Date)
+    // ✅ Date: Giữ nguyên (BSON supports Date)
     if (value instanceof Date) {
+      logger.trace("Value is Date, keeping native");
       return value;
     }
 
-    // Keep Boolean as-is (BSON supports Boolean)
+    // ✅ Boolean: Giữ nguyên (BSON supports Boolean)
     if (typeof value === "boolean") {
+      logger.trace("Value is Boolean, keeping native");
       return value;
     }
 
-    // Arrays và Objects giữ nguyên (BSON supports them)
+    // ✅ Array/Object: Giữ nguyên (BSON supports them)
     if (typeof value === "object") {
+      logger.trace("Value is Object/Array, keeping native");
       return value;
     }
 
+    logger.trace("Value is primitive, returning as-is");
     return value;
   }
 
+  // ==========================================
+  // ✅ TYPE MAPPING (LEARNED FROM @dqcai/mongo)
+  // ==========================================
+
   /**
-   * ✅ MONGODB: Không cần ánh xạ kiểu (schemaless)
-   * MongoDB không yêu cầu schema nghiêm ngặt
+   * 🗺️ MongoDB type mapping - BSON types
    */
   protected mapFieldTypeToDBType(fieldType: string, length?: number): string {
-    // MongoDB không cần type mapping vì là schemaless
-    // Trả về tên BSON type để tham khảo
+    logger.trace("Mapping field type to BSON", { fieldType, length });
+
     const bsonTypeMap: Record<string, string> = {
       string: "string",
       text: "string",
+      varchar: "string",
+      char: "string",
+      
       number: "number",
       integer: "int",
+      int: "int",
       bigint: "long",
       float: "double",
       double: "double",
+      decimal: "decimal",
+      
       boolean: "bool",
+      bool: "bool",
+      
       date: "date",
       datetime: "date",
       timestamp: "date",
+      
       json: "object",
       jsonb: "object",
-      array: "array",
       object: "object",
+      array: "array",
+      
       uuid: "string",
       binary: "binData",
+      blob: "binData",
     };
 
-    return bsonTypeMap[fieldType.toLowerCase()] || "string";
+    const mappedType = bsonTypeMap[fieldType.toLowerCase()] || "string";
+    logger.trace("Mapped type result", { fieldType, mappedType });
+
+    return mappedType;
   }
 
+  // ==========================================
+  // ✅ INSERT RESULT PROCESSING (LEARNED FROM @dqcai/mongo)
+  // ==========================================
+
   /**
-   * ✅ MONGODB: Xử lý kết quả INSERT
-   * MongoDB trả về insertedId trực tiếp
+   * 📊 MongoDB trả về insertedId trực tiếp
    */
   protected async processInsertResult(
     collectionName: string,
@@ -92,67 +126,139 @@ export class MongoDBAdapter extends BaseAdapter {
     data: any,
     primaryKeys?: string[]
   ): Promise<any> {
-    // MongoDB trả về { ...data, _id: insertedId }
-    return { ...data, _id: result.insertedId };
-  }
+    logger.trace("Processing insert result", { collectionName, insertedId: result.insertedId?.toString() });
 
-  /**
-   * ✅ MONGODB: Không sử dụng placeholder (NoSQL)
-   */
-  protected getPlaceholder(index: number): string {
-    // MongoDB không dùng placeholders
-    return "";
+    // MongoDB returns { insertedId, acknowledged }
+    return { 
+      ...data, 
+      _id: result.insertedId,
+      id: result.insertedId.toString() // For compatibility
+    };
   }
 
   // ==========================================
-  // MONGODB-SPECIFIC IMPLEMENTATIONS
+  // ✅ PLACEHOLDER (NoSQL - không dùng)
+  // ==========================================
+
+  protected getPlaceholder(index: number): string {
+    logger.trace("Getting MongoDB placeholder (unused)", { index });
+    return ""; // MongoDB không dùng placeholders
+  }
+
+  // ==========================================
+  // ✅ EXECUTE RAW (LEARNED FROM @dqcai/mongo)
   // ==========================================
 
   async executeRaw(query: any, params?: any[]): Promise<any> {
-    if (!this.db) throw new Error("Not connected to MongoDB");
+    logger.trace("Executing raw MongoDB command", { 
+      queryType: typeof query, 
+      paramsCount: params?.length || 0 
+    });
+
+    if (!this.db) {
+      logger.error("Not connected to MongoDB");
+      throw new Error("Not connected to MongoDB");
+    }
+    
+    // MongoDB sử dụng command object, không phải SQL string
     const result = await this.db.admin().command(query);
+    logger.trace("Raw command executed", { resultKeys: Object.keys(result) });
     return { rows: [result], rowCount: 1 };
   }
 
+  // ==========================================
+  // ✅ TABLE/COLLECTION OPERATIONS
+  // ==========================================
+
   async tableExists(collectionName: string): Promise<boolean> {
-    if (!this.db) throw new Error("Not connected");
+    logger.trace("Checking collection existence", { collectionName });
+
+    if (!this.db) {
+      logger.error("Not connected");
+      throw new Error("Not connected");
+    }
     const collections = await this.db
       .listCollections({ name: collectionName })
       .toArray();
-    return collections.length > 0;
+    
+    const exists = collections.length > 0;
+    logger.trace("Collection existence check result", { collectionName, exists });
+    return exists;
   }
 
   async getTableInfo(
     collectionName: string
   ): Promise<EntitySchemaDefinition | null> {
-    return { name: collectionName, cols: [] };
+    logger.trace("Getting collection info", { collectionName });
+    
+    // MongoDB is schemaless, return basic info
+    const info = { name: collectionName, cols: [] };
+    logger.trace("Returned schemaless info", { collectionName });
+    return info;
   }
 
+  // Lớp này chỉ có mongo mới tạo kiểu này, còn các cơ sở dữ liệu SQL thì sẽ tạo chung một thủ tục
   async createTable(
     collectionName: string,
     schema: SchemaDefinition
   ): Promise<void> {
-    if (!this.db) throw new Error("Not connected");
-    await this.db.createCollection(collectionName);
+    logger.debug("Creating collection with validation", { 
+      collectionName, 
+      schemaKeys: Object.keys(schema) 
+    });
+
+    if (!this.db) {
+      logger.error("Not connected");
+      throw new Error("Not connected");
+    }
+    
+    // Build validation schema
+    const validation = this.buildValidationSchema(schema);
+    
+    await this.db.createCollection(collectionName, {
+      validator: validation,
+      validationLevel: "moderate",
+      validationAction: "warn",
+    });
+
+    logger.info("Collection created successfully", { collectionName });
   }
 
   async dropTable(collectionName: string): Promise<void> {
-    if (!this.db) throw new Error("Not connected");
+    logger.debug("Dropping collection", { collectionName });
+
+    if (!this.db) {
+      logger.error("Not connected");
+      throw new Error("Not connected");
+    }
     await this.db.collection(collectionName).drop();
+
+    logger.info("Collection dropped successfully", { collectionName });
   }
 
   // ==========================================
-  // CRUD OPERATIONS (MONGODB-SPECIFIC)
+  // ✅ CRUD OPERATIONS (MONGODB-SPECIFIC)
   // ==========================================
 
   /**
-   * 🔄 OVERRIDE: MongoDB insertOne
+   * 🔄 INSERT ONE - MongoDB native
    */
   async insertOne(collectionName: string, data: any): Promise<any> {
-    if (!this.db) throw new Error("Not connected");
+    logger.debug("Inserting one document", { 
+      collectionName, 
+      dataKeys: Object.keys(data) 
+    });
+
+    if (!this.db) {
+      logger.error("Not connected");
+      throw new Error("Not connected");
+    }
     
-    // ✅ Sanitize values (though MongoDB handles most types)
-    const sanitizedData = Object.entries(data).reduce((acc, [key, value]) => {
+    // ✅ Convert id to _id if present
+    const mongoData = this.sqliteToMongoFormat(data);
+    
+    // ✅ Sanitize (though MongoDB handles most types)
+    const sanitizedData = Object.entries(mongoData).reduce((acc, [key, value]) => {
       acc[key] = this.sanitizeValue(value);
       return acc;
     }, {} as any);
@@ -160,14 +266,30 @@ export class MongoDBAdapter extends BaseAdapter {
     const result = await this.db.collection(collectionName).insertOne(sanitizedData);
     
     // ✅ Process result
-    return this.processInsertResult(collectionName, result, sanitizedData);
+    const inserted = await this.processInsertResult(collectionName, result, sanitizedData);
+
+    logger.info("Inserted one document successfully", { 
+      collectionName, 
+      insertedId: inserted.id 
+    });
+
+    return inserted;
   }
 
   async insertMany(collectionName: string, data: any[]): Promise<any[]> {
-    if (!this.db) throw new Error("Not connected");
+    logger.debug("Inserting many documents", { 
+      collectionName, 
+      count: data.length 
+    });
+
+    if (!this.db) {
+      logger.error("Not connected");
+      throw new Error("Not connected");
+    }
     
-    // ✅ Sanitize all documents
-    const sanitizedData = data.map(doc => 
+    // ✅ Convert and sanitize all documents
+    const mongoData = data.map(doc => this.sqliteToMongoFormat(doc));
+    const sanitizedData = mongoData.map(doc => 
       Object.entries(doc).reduce((acc, [key, value]) => {
         acc[key] = this.sanitizeValue(value);
         return acc;
@@ -175,22 +297,59 @@ export class MongoDBAdapter extends BaseAdapter {
     );
 
     const result = await this.db.collection(collectionName).insertMany(sanitizedData);
-    return sanitizedData.map((doc, i) => ({ ...doc, _id: result.insertedIds[i] }));
+    
+    const insertedDocs = sanitizedData.map((doc, i) => ({ 
+      ...doc, 
+      _id: result.insertedIds[i],
+      id: result.insertedIds[i].toString()
+    }));
+
+    logger.info("Inserted many documents successfully", { 
+      collectionName, 
+      count: insertedDocs.length 
+    });
+
+    return insertedDocs;
   }
 
+  /**
+   * 🔍 FIND - With filter conversion
+   */
   async find(
     collectionName: string,
     filter: QueryFilter,
     options?: QueryOptions
   ): Promise<any[]> {
-    if (!this.db) throw new Error("Not connected");
+    logger.trace("Finding documents", { 
+      collectionName, 
+      filterKeys: Object.keys(filter), 
+      optionsKeys: options ? Object.keys(options) : [] 
+    });
+
+    if (!this.db) {
+      logger.error("Not connected");
+      throw new Error("Not connected");
+    }
+    
     const mongoFilter = this.convertFilterToMongo(filter);
     let cursor = this.db.collection(collectionName).find(mongoFilter);
+    
     if (options?.sort) cursor = cursor.sort(options.sort);
     if (options?.limit) cursor = cursor.limit(options.limit);
     if (options?.skip || options?.offset)
       cursor = cursor.skip(options.skip || options.offset || 0);
-    return await cursor.toArray();
+    
+    const results = await cursor.toArray();
+    
+    // Convert _id back to id for compatibility
+    const formattedResults = results.map((doc: any) => this.mongoToSQLiteFormat(doc));
+
+    logger.trace("Found documents", { 
+      collectionName, 
+      count: formattedResults.length 
+    });
+
+    return formattedResults;
   }
 
   async findOne(
@@ -198,25 +357,62 @@ export class MongoDBAdapter extends BaseAdapter {
     filter: QueryFilter,
     options?: QueryOptions
   ): Promise<any | null> {
-    if (!this.db) throw new Error("Not connected");
+    logger.trace("Finding one document", { 
+      collectionName, 
+      filterKeys: Object.keys(filter), 
+      optionsKeys: options ? Object.keys(options) : [] 
+    });
+
+    if (!this.db) {
+      logger.error("Not connected");
+      throw new Error("Not connected");
+    }
+    
     const mongoFilter = this.convertFilterToMongo(filter);
     const mongoOptions: any = {};
     if (options?.sort) mongoOptions.sort = options.sort;
-    return await this.db
+    
+    const result = await this.db
       .collection(collectionName)
       .findOne(mongoFilter, mongoOptions);
+    
+    const formattedResult = result ? this.mongoToSQLiteFormat(result) : null;
+
+    logger.trace("Found one document", { 
+      collectionName, 
+      found: !!formattedResult 
+    });
+
+    return formattedResult;
   }
 
   async findById(collectionName: string, id: any): Promise<any | null> {
+    logger.trace("Finding document by ID", { 
+      collectionName, 
+      id 
+    });
+
     return this.findOne(collectionName, { _id: new this.ObjectId(id) } as any);
   }
 
+  /**
+   * 🔄 UPDATE - With sanitization
+   */
   async update(
     collectionName: string,
     filter: QueryFilter,
     data: any
   ): Promise<number> {
-    if (!this.db) throw new Error("Not connected");
+    logger.debug("Updating documents", { 
+      collectionName, 
+      filterKeys: Object.keys(filter), 
+      dataKeys: Object.keys(data) 
+    });
+
+    if (!this.db) {
+      logger.error("Not connected");
+      throw new Error("Not connected");
+    }
     
     // ✅ Sanitize update data
     const sanitizedData = Object.entries(data).reduce((acc, [key, value]) => {
@@ -228,7 +424,19 @@ export class MongoDBAdapter extends BaseAdapter {
     const result = await this.db
       .collection(collectionName)
       .updateMany(mongoFilter, { $set: sanitizedData });
-    return result.modifiedCount;
+    
+    const modifiedCount = result.modifiedCount;
+
+    if (modifiedCount === 0) {
+      logger.warn("No documents updated", { collectionName });
+    } else {
+      logger.info("Updated documents successfully", { 
+        collectionName, 
+        modifiedCount 
+      });
+    }
+
+    return modifiedCount;
   }
 
   async updateOne(
@@ -236,9 +444,17 @@ export class MongoDBAdapter extends BaseAdapter {
     filter: QueryFilter,
     data: any
   ): Promise<boolean> {
-    if (!this.db) throw new Error("Not connected");
+    logger.trace("Updating one document", { 
+      collectionName, 
+      filterKeys: Object.keys(filter), 
+      dataKeys: Object.keys(data) 
+    });
+
+    if (!this.db) {
+      logger.error("Not connected");
+      throw new Error("Not connected");
+    }
     
-    // ✅ Sanitize update data
     const sanitizedData = Object.entries(data).reduce((acc, [key, value]) => {
       acc[key] = this.sanitizeValue(value);
       return acc;
@@ -248,7 +464,15 @@ export class MongoDBAdapter extends BaseAdapter {
     const result = await this.db
       .collection(collectionName)
       .updateOne(mongoFilter, { $set: sanitizedData });
-    return result.modifiedCount > 0;
+    
+    const updated = result.modifiedCount > 0;
+
+    logger.trace("Updated one document result", { 
+      collectionName, 
+      updated 
+    });
+
+    return updated;
   }
 
   async updateById(
@@ -256,6 +480,12 @@ export class MongoDBAdapter extends BaseAdapter {
     id: any,
     data: any
   ): Promise<boolean> {
+    logger.trace("Updating document by ID", { 
+      collectionName, 
+      id, 
+      dataKeys: Object.keys(data) 
+    });
+
     return this.updateOne(
       collectionName,
       { _id: new this.ObjectId(id) } as any,
@@ -263,45 +493,127 @@ export class MongoDBAdapter extends BaseAdapter {
     );
   }
 
+  /**
+   * 🗑️ DELETE
+   */
   async delete(collectionName: string, filter: QueryFilter): Promise<number> {
-    if (!this.db) throw new Error("Not connected");
+    logger.debug("Deleting documents", { 
+      collectionName, 
+      filterKeys: Object.keys(filter) 
+    });
+
+    if (!this.db) {
+      logger.error("Not connected");
+      throw new Error("Not connected");
+    }
+    
     const mongoFilter = this.convertFilterToMongo(filter);
     const result = await this.db
       .collection(collectionName)
       .deleteMany(mongoFilter);
-    return result.deletedCount;
+    
+    const deletedCount = result.deletedCount;
+
+    if (deletedCount === 0) {
+      logger.warn("No documents deleted", { collectionName });
+    } else {
+      logger.info("Deleted documents successfully", { 
+        collectionName, 
+        deletedCount 
+      });
+    }
+
+    return deletedCount;
   }
 
   async deleteOne(
     collectionName: string,
     filter: QueryFilter
   ): Promise<boolean> {
-    if (!this.db) throw new Error("Not connected");
+    logger.trace("Deleting one document", { 
+      collectionName, 
+      filterKeys: Object.keys(filter) 
+    });
+
+    if (!this.db) {
+      logger.error("Not connected");
+      throw new Error("Not connected");
+    }
+    
     const mongoFilter = this.convertFilterToMongo(filter);
     const result = await this.db
       .collection(collectionName)
       .deleteOne(mongoFilter);
-    return result.deletedCount > 0;
+    
+    const deleted = result.deletedCount > 0;
+
+    logger.trace("Deleted one document result", { 
+      collectionName, 
+      deleted 
+    });
+
+    return deleted;
   }
 
   async deleteById(collectionName: string, id: any): Promise<boolean> {
+    logger.trace("Deleting document by ID", { 
+      collectionName, 
+      id 
+    });
+
     return this.deleteOne(collectionName, {
       _id: new this.ObjectId(id),
     } as any);
   }
 
   async count(collectionName: string, filter?: QueryFilter): Promise<number> {
-    if (!this.db) throw new Error("Not connected");
+    logger.trace("Counting documents", { 
+      collectionName, 
+      hasFilter: !!filter 
+    });
+
+    if (!this.db) {
+      logger.error("Not connected");
+      throw new Error("Not connected");
+    }
+    
     const mongoFilter = filter ? this.convertFilterToMongo(filter) : {};
-    return await this.db.collection(collectionName).countDocuments(mongoFilter);
+    const countValue = await this.db.collection(collectionName).countDocuments(mongoFilter);
+
+    logger.trace("Count result", { 
+      collectionName, 
+      count: countValue 
+    });
+
+    return countValue;
   }
 
+  // ==========================================
+  // ✅ MONGODB AGGREGATION
+  // ==========================================
+
   async aggregate(collectionName: string, pipeline: any[]): Promise<any[]> {
-    if (!this.db) throw new Error("Not connected");
-    return await this.db
+    logger.debug("Executing aggregation pipeline", { 
+      collectionName, 
+      pipelineStages: pipeline.length 
+    });
+
+    if (!this.db) {
+      logger.error("Not connected");
+      throw new Error("Not connected");
+    }
+    
+    const results = await this.db
       .collection(collectionName)
       .aggregate(pipeline)
       .toArray();
+
+    logger.trace("Aggregation completed", { 
+      collectionName, 
+      resultCount: results.length 
+    });
+
+    return results;
   }
 
   async distinct(
@@ -309,56 +621,176 @@ export class MongoDBAdapter extends BaseAdapter {
     field: string,
     filter?: QueryFilter
   ): Promise<any[]> {
-    if (!this.db) throw new Error("Not connected");
+    logger.trace("Getting distinct values", { 
+      collectionName, 
+      field, 
+      hasFilter: !!filter 
+    });
+
+    if (!this.db) {
+      logger.error("Not connected");
+      throw new Error("Not connected");
+    }
+    
     const mongoFilter = filter ? this.convertFilterToMongo(filter) : {};
-    return await this.db
+    const distinctValues = await this.db
       .collection(collectionName)
       .distinct(field, mongoFilter);
+
+    logger.trace("Distinct values retrieved", { 
+      collectionName, 
+      field, 
+      count: distinctValues.length 
+    });
+
+    return distinctValues;
   }
 
+  // ==========================================
+  // ✅ TRANSACTION (LEARNED FROM @dqcai/mongo)
+  // ==========================================
+
   async beginTransaction(): Promise<Transaction> {
-    if (!this.client) throw new Error("Not connected");
+    logger.info("Beginning MongoDB transaction");
+
+    if (!this.client) {
+      logger.error("Not connected");
+      throw new Error("Not connected");
+    }
+    
     const session = this.client.startSession();
     await session.startTransaction();
+    
     return {
       commit: async () => {
         if (!session.inTransaction)
           throw new Error("Transaction already completed");
         await session.commitTransaction();
         await session.endSession();
+        logger.info("Transaction committed");
       },
       rollback: async () => {
         if (!session.inTransaction)
           throw new Error("Transaction already completed");
         await session.abortTransaction();
         await session.endSession();
+        logger.info("Transaction rolled back");
       },
       isActive: () => session.inTransaction,
     };
   }
 
   // ==========================================
-  // MONGODB FILTER CONVERSION
+  // ✅ HELPER METHODS (LEARNED FROM @dqcai/mongo)
   // ==========================================
 
   /**
-   * Chuyển đổi QueryFilter sang MongoDB query format
+   * 🔄 Convert SQLite format to MongoDB format
+   */
+  private sqliteToMongoFormat(record: Record<string, any>): Record<string, any> {
+    logger.trace("Converting SQLite format to Mongo", { recordKeys: Object.keys(record || {}) });
+
+    if (!record) return record;
+
+    const converted = { ...record };
+
+    // Convert id to _id
+    if (converted.id) {
+      if (this.ObjectId && this.ObjectId.isValid(converted.id)) {
+        converted._id = new this.ObjectId(converted.id);
+      } else {
+        converted._id = converted.id;
+      }
+      delete converted.id;
+    }
+
+    // Parse JSON strings back to objects/arrays
+    for (const [key, value] of Object.entries(converted)) {
+      if (typeof value === "string") {
+        // Try to parse as date
+        if (value.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/)) {
+          const date = new Date(value);
+          if (!isNaN(date.getTime())) {
+            converted[key] = date;
+            continue;
+          }
+        }
+
+        // Try to parse as JSON
+        if (
+          (value.startsWith("{") && value.endsWith("}")) ||
+          (value.startsWith("[") && value.endsWith("]"))
+        ) {
+          try {
+            converted[key] = JSON.parse(value);
+          } catch {
+            // Keep as string if parsing fails
+          }
+        }
+      }
+    }
+
+    logger.trace("Conversion to Mongo complete", { resultKeys: Object.keys(converted) });
+    return converted;
+  }
+
+  /**
+   * 🔄 Convert MongoDB format to SQLite format
+   */
+  private mongoToSQLiteFormat(document: any): Record<string, any> {
+    logger.trace("Converting Mongo format to SQLite", { documentKeys: Object.keys(document || {}) });
+
+    if (!document) return document;
+
+    const converted = { ...document };
+
+    // Convert _id to id
+    if (converted._id) {
+      converted.id = converted._id.toString();
+      delete converted._id;
+    }
+
+    // Convert ObjectIds to strings
+    for (const [key, value] of Object.entries(converted)) {
+      if (value && this.ObjectId && value instanceof this.ObjectId) {
+        converted[key] = value.toString();
+      } else if (value instanceof Date) {
+        converted[key] = value.toISOString();
+      }
+    }
+
+    logger.trace("Conversion to SQLite complete", { resultKeys: Object.keys(converted) });
+    return converted;
+  }
+
+  /**
+   * 🔍 Convert QueryFilter to MongoDB query format
    */
   private convertFilterToMongo(filter: QueryFilter): any {
+    logger.trace("Converting filter to MongoDB query", { 
+      filterKeys: Object.keys(filter), 
+      filterType: typeof filter 
+    });
+
     const mongoFilter: any = {};
+    
     for (const [key, value] of Object.entries(filter)) {
+      // Handle logical operators
       if (key === "$and" || key === "$or" || key === "$not") {
         mongoFilter[key] = Array.isArray(value)
           ? value.map((f) => this.convertFilterToMongo(f))
           : this.convertFilterToMongo(value);
         continue;
       }
+
+      // Handle comparison operators
       if (
         typeof value === "object" &&
         value !== null &&
         !Array.isArray(value)
       ) {
         const conditions: any = {};
+        
         for (const [op, opValue] of Object.entries(value)) {
           switch (op) {
             case "$eq":
@@ -392,6 +824,7 @@ export class MongoDBAdapter extends BaseAdapter {
               conditions.$exists = opValue;
               break;
             case "$like":
+              // SQL LIKE to MongoDB regex
               if (typeof opValue === "string") {
                 const regexPattern = opValue
                   .replace(/%/g, ".*")
@@ -401,11 +834,76 @@ export class MongoDBAdapter extends BaseAdapter {
               break;
           }
         }
+        
         mongoFilter[key] = conditions;
       } else {
         mongoFilter[key] = value;
       }
     }
+
+    logger.trace("Filter conversion complete", { mongoFilterKeys: Object.keys(mongoFilter) });
     return mongoFilter;
+  }
+
+  /**
+   * 🏗️ Build validation schema for MongoDB
+   */
+  private buildValidationSchema(schema: SchemaDefinition): Record<string, any> {
+    logger.trace("Building MongoDB validation schema", { 
+      schemaKeys: Object.keys(schema) 
+    });
+
+    const properties: Record<string, any> = {};
+    const required: string[] = [];
+
+    for (const [fieldName, fieldDef] of Object.entries(schema)) {
+      const bsonType = this.mapFieldTypeToDBType(fieldDef.type);
+      const fieldValidation: any = { bsonType };
+
+      if (fieldDef.enum) {
+        fieldValidation.enum = fieldDef.enum;
+      }
+
+      if (fieldDef.required && fieldName !== "id") {
+        required.push(fieldName);
+      }
+
+      properties[fieldName] = fieldValidation;
+    }
+
+    const validationSchema = {
+      $jsonSchema: {
+        bsonType: "object",
+        properties,
+        required,
+      },
+    };
+
+    logger.trace("Validation schema built", { 
+      propertyCount: Object.keys(properties).length, 
+      requiredCount: required.length 
+    });
+
+    return validationSchema;
+  }
+
+  // ==========================================
+  // ✅ OBJECTID HELPERS
+  // ==========================================
+
+  createObjectId(id?: string): any {
+    logger.trace("Creating ObjectId", { id });
+
+    return id ? new this.ObjectId(id) : new this.ObjectId();
+  }
+
+  isValidObjectId(id: string): boolean {
+    logger.trace("Validating ObjectId", { id });
+
+    const isValid = this.ObjectId?.isValid(id) || false;
+
+    logger.trace("ObjectId validation result", { id, isValid });
+
+    return isValid;
   }
 }

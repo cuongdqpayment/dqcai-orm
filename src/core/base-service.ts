@@ -6,6 +6,8 @@ import { UniversalDAO } from "./universal-dao";
 import { DatabaseManager } from "./database-manager";
 import { IResult, QueryFilter, QueryOptions, Transaction } from "../types/orm.types";
 import { ServiceStatus } from "../types/service.types";
+import { createModuleLogger, ORMModules } from "../logger";
+const logger = createModuleLogger(ORMModules.BASE_SERVICE);
 
 /**
  * Base Service - IMPROVED với transaction handling tốt hơn
@@ -20,6 +22,11 @@ export abstract class BaseService<TModel = any> {
   constructor(schemaKey: string, entityName: string) {
     this.schemaKey = schemaKey;
     this.entityName = entityName;
+
+    logger.debug("Creating BaseService instance", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName
+    });
   }
 
   // ==================== INITIALIZATION ====================
@@ -29,24 +36,62 @@ export abstract class BaseService<TModel = any> {
    */
   public async initialize(retries: number = 3): Promise<void> {
     this.lastAccess = Date.now();
-    
+
+    logger.info("Initializing service", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName,
+      retries
+    });
+
     if (this.dao && this.dao.getAdapter().isConnected()) {
+      logger.debug("Service already initialized, skipping", {
+        schemaKey: this.schemaKey,
+        entityName: this.entityName
+      });
       return;
     }
 
     let lastError: Error | null = null;
     for (let i = 0; i < retries; i++) {
+      logger.debug("Initialization retry attempt", {
+        attempt: i + 1,
+        totalRetries: retries,
+        schemaKey: this.schemaKey,
+        entityName: this.entityName
+      });
+
       try {
         this.dao = await DatabaseManager.getDAO(this.schemaKey);
         this.isOpened = true;
+
+        logger.info("Service initialized successfully", {
+          schemaKey: this.schemaKey,
+          entityName: this.entityName
+        });
+
         return;
       } catch (error) {
         lastError = error as Error;
+        logger.warn("Initialization attempt failed", {
+          attempt: i + 1,
+          totalRetries: retries,
+          schemaKey: this.schemaKey,
+          entityName: this.entityName,
+          error: lastError.message
+        });
+
         if (i < retries - 1) {
           await this.sleep(1000 * (i + 1)); // Exponential backoff
         }
       }
     }
+
+    logger.error("Failed to initialize service after retries", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName,
+      retries,
+      lastError: lastError?.message
+    });
 
     throw new Error(
       `Failed to initialize service ${this.schemaKey}:${this.entityName} after ${retries} retries: ${lastError}`
@@ -58,13 +103,20 @@ export abstract class BaseService<TModel = any> {
    */
   protected async ensureInitialized(): Promise<void> {
     if (!this.dao || !this.isOpened) {
+      logger.debug("Service not initialized, initializing now", {
+        schemaKey: this.schemaKey,
+        entityName: this.entityName
+      });
       await this.initialize();
       return;
     }
 
     // ✅ Kiểm tra connection còn sống không
     if (!this.dao.getAdapter().isConnected()) {
-      console.warn(`Connection lost for ${this.schemaKey}, reconnecting...`);
+      logger.warn("Connection lost for service, reconnecting", {
+        schemaKey: this.schemaKey,
+        entityName: this.entityName
+      });
       await this.initialize();
     }
   }
@@ -74,6 +126,10 @@ export abstract class BaseService<TModel = any> {
    */
   protected getDAO(): UniversalDAO<any> {
     if (!this.dao || !this.isOpened) {
+      logger.error("Service not initialized, cannot get DAO", {
+        schemaKey: this.schemaKey,
+        entityName: this.entityName
+      });
       throw new Error(
         `Service not initialized for ${this.schemaKey}:${this.entityName}. Call initialize() first.`
       );
@@ -92,6 +148,11 @@ export abstract class BaseService<TModel = any> {
    * @returns UniversalDAO instance
    */
   public async getUniversalDAO(): Promise<UniversalDAO<any>> {
+    logger.trace("Getting UniversalDAO", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName
+    });
+
     await this.ensureInitialized();
     return this.getDAO();
   }
@@ -100,6 +161,12 @@ export abstract class BaseService<TModel = any> {
    * Thực thi truy vấn raw thông qua DAO
    */
   public async executeRaw(query: string | any, params?: any[]): Promise<IResult> {
+    logger.trace("Executing raw query", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName,
+      queryType: typeof query === 'string' ? 'sql' : 'object'
+    });
+
     await this.ensureInitialized();
     this.lastAccess = Date.now();
     return this.getDAO().execute(query, params);
@@ -109,6 +176,11 @@ export abstract class BaseService<TModel = any> {
    * Lấy adapter từ DAO
    */
   public async getAdapter(): Promise<any> {
+    logger.trace("Getting adapter", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName
+    });
+
     await this.ensureInitialized();
     return this.getDAO().getAdapter();
   }
@@ -117,41 +189,97 @@ export abstract class BaseService<TModel = any> {
    * Lấy schema từ DAO
    */
   public getSchema(): any {
+    logger.trace("Getting schema", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName
+    });
+
     return this.getDAO().getSchema();
   }
 
   // ==================== CRUD OPERATIONS ====================
 
   public async find(query: QueryFilter = {}, options?: QueryOptions): Promise<TModel[]> {
+    logger.trace("Finding records", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName,
+      queryKeys: Object.keys(query)
+    });
+
     await this.ensureInitialized();
     this.lastAccess = Date.now();
-    return this.getDAO().find<TModel>(this.entityName, query, options);
+    const results = await this.getDAO().find<TModel>(this.entityName, query, options);
+    logger.trace("Found records", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName,
+      count: results.length
+    });
+
+    return results;
   }
 
   public async findOne(
     query: QueryFilter,
     options?: QueryOptions
   ): Promise<TModel | null> {
+    logger.trace("Finding one record", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName,
+      queryKeys: Object.keys(query)
+    });
+
     await this.ensureInitialized();
     this.lastAccess = Date.now();
-    return this.getDAO().findOne<TModel>(this.entityName, query, options);
+    const result = await this.getDAO().findOne<TModel>(this.entityName, query, options);
+    logger.trace("Found one record", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName,
+      found: !!result
+    });
+
+    return result;
   }
 
   public async findById(id: any): Promise<TModel | null> {
+    logger.trace("Finding record by ID", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName,
+      id
+    });
+
     await this.ensureInitialized();
     this.lastAccess = Date.now();
     return this.getDAO().findById<TModel>(this.entityName, id);
   }
 
   public async create(data: Partial<TModel>): Promise<TModel> {
+    logger.debug("Creating record", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName,
+      dataKeys: Object.keys(data)
+    });
+
     await this.ensureInitialized();
     this.lastAccess = Date.now();
     const processedData = await this.beforeCreate(data);
     const result = await this.getDAO().insert<TModel>(this.entityName, processedData);
-    return this.afterCreate(result);
+    const finalResult = await this.afterCreate(result);
+
+    logger.info("Created record successfully", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName
+    });
+
+    return finalResult;
   }
 
   public async createMany(data: Partial<TModel>[]): Promise<TModel[]> {
+    logger.debug("Creating many records", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName,
+      count: data.length
+    });
+
     await this.ensureInitialized();
     this.lastAccess = Date.now();
     
@@ -163,15 +291,37 @@ export abstract class BaseService<TModel = any> {
     const results = await this.getDAO().insertMany<TModel>(this.entityName, processedData);
     
     // ✅ Áp dụng afterCreate cho từng result
-    return Promise.all(results.map((result) => this.afterCreate(result)));
+    const finalResults = await Promise.all(results.map((result) => this.afterCreate(result)));
+
+    logger.info("Created many records successfully", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName,
+      count: finalResults.length
+    });
+
+    return finalResults;
   }
 
   public async update(filter: QueryFilter, data: Partial<TModel>): Promise<number> {
+    logger.debug("Updating records", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName,
+      filterKeys: Object.keys(filter),
+      dataKeys: Object.keys(data)
+    });
+
     await this.ensureInitialized();
     this.lastAccess = Date.now();
     const processedData = await this.beforeUpdate(filter, data);
     const count = await this.getDAO().update(this.entityName, filter, processedData);
     await this.afterUpdate(count);
+
+    logger.info("Updated records successfully", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName,
+      affectedCount: count
+    });
+
     return count;
   }
 
@@ -179,6 +329,13 @@ export abstract class BaseService<TModel = any> {
     filter: QueryFilter,
     data: Partial<TModel>
   ): Promise<boolean> {
+    logger.trace("Updating one record", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName,
+      filterKeys: Object.keys(filter),
+      dataKeys: Object.keys(data)
+    });
+
     await this.ensureInitialized();
     this.lastAccess = Date.now();
     const processedData = await this.beforeUpdate(filter, data);
@@ -186,6 +343,13 @@ export abstract class BaseService<TModel = any> {
   }
 
   public async updateById(id: any, data: Partial<TModel>): Promise<boolean> {
+    logger.trace("Updating record by ID", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName,
+      id,
+      dataKeys: Object.keys(data)
+    });
+
     await this.ensureInitialized();
     this.lastAccess = Date.now();
     const processedData = await this.beforeUpdate({ id }, data);
@@ -193,15 +357,34 @@ export abstract class BaseService<TModel = any> {
   }
 
   public async delete(filter: QueryFilter): Promise<number> {
+    logger.debug("Deleting records", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName,
+      filterKeys: Object.keys(filter)
+    });
+
     await this.ensureInitialized();
     this.lastAccess = Date.now();
     await this.beforeDelete(filter);
     const count = await this.getDAO().delete(this.entityName, filter);
     await this.afterDelete(count);
+
+    logger.info("Deleted records successfully", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName,
+      affectedCount: count
+    });
+
     return count;
   }
 
   public async deleteOne(filter: QueryFilter): Promise<boolean> {
+    logger.trace("Deleting one record", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName,
+      filterKeys: Object.keys(filter)
+    });
+
     await this.ensureInitialized();
     this.lastAccess = Date.now();
     await this.beforeDelete(filter);
@@ -209,27 +392,67 @@ export abstract class BaseService<TModel = any> {
   }
 
   public async deleteById(id: any): Promise<boolean> {
+    logger.trace("Deleting record by ID", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName,
+      id
+    });
+
     await this.ensureInitialized();
     this.lastAccess = Date.now();
     return this.getDAO().deleteById(this.entityName, id);
   }
 
   public async count(filter?: QueryFilter): Promise<number> {
+    logger.trace("Counting records", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName,
+      hasFilter: !!filter
+    });
+
     await this.ensureInitialized();
     this.lastAccess = Date.now();
-    return this.getDAO().count(this.entityName, filter);
+    const count = await this.getDAO().count(this.entityName, filter);
+
+    logger.trace("Counted records", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName,
+      count
+    });
+
+    return count;
   }
 
   public async exists(filter: QueryFilter): Promise<boolean> {
+    logger.trace("Checking existence", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName,
+      filterKeys: Object.keys(filter)
+    });
+
     await this.ensureInitialized();
     this.lastAccess = Date.now();
     const count = await this.count(filter);
-    return count > 0;
+    const exists = count > 0;
+
+    logger.trace("Existence check result", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName,
+      exists
+    });
+
+    return exists;
   }
 
   // ==================== ADVANCED OPERATIONS ====================
 
   public async execute(query: string | any, params?: any[]): Promise<IResult> {
+    logger.trace("Executing advanced query", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName,
+      queryType: typeof query === 'string' ? 'sql' : 'object'
+    });
+
     await this.ensureInitialized();
     this.lastAccess = Date.now();
     return this.getDAO().execute(query, params);
@@ -241,6 +464,11 @@ export abstract class BaseService<TModel = any> {
    * 🆕 Bắt đầu transaction (low-level)
    */
   public async beginTransaction(): Promise<Transaction> {
+    logger.info("Beginning transaction", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName
+    });
+
     await this.ensureInitialized();
     this.lastAccess = Date.now();
     return this.getDAO().getAdapter().beginTransaction();
@@ -258,15 +486,33 @@ export abstract class BaseService<TModel = any> {
   public async withTransaction<T>(
     callback: (service: this) => Promise<T>
   ): Promise<T> {
+    logger.debug("Starting transaction callback", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName
+    });
+
     await this.ensureInitialized();
     const tx = await this.beginTransaction();
     
     try {
       const result = await callback(this);
       await tx.commit();
+
+      logger.info("Transaction committed successfully", {
+        schemaKey: this.schemaKey,
+        entityName: this.entityName
+      });
+
       return result;
     } catch (error) {
       await tx.rollback();
+
+      logger.error("Transaction rolled back due to error", {
+        schemaKey: this.schemaKey,
+        entityName: this.entityName,
+        error: (error as Error).message
+      });
+
       throw error;
     }
   }
@@ -275,6 +521,12 @@ export abstract class BaseService<TModel = any> {
    * 🆕 Batch create với transaction
    */
   public async createBatch(data: Partial<TModel>[]): Promise<TModel[]> {
+    logger.debug("Creating batch with transaction", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName,
+      count: data.length
+    });
+
     return this.withTransaction(async () => {
       return this.createMany(data);
     });
@@ -286,6 +538,12 @@ export abstract class BaseService<TModel = any> {
   public async updateBatch(
     updates: Array<{ filter: QueryFilter; data: Partial<TModel> }>
   ): Promise<number> {
+    logger.debug("Updating batch with transaction", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName,
+      updateCount: updates.length
+    });
+
     return this.withTransaction(async () => {
       let totalCount = 0;
       for (const { filter, data } of updates) {
@@ -300,6 +558,12 @@ export abstract class BaseService<TModel = any> {
    * 🆕 Batch delete với transaction
    */
   public async deleteBatch(filters: QueryFilter[]): Promise<number> {
+    logger.debug("Deleting batch with transaction", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName,
+      filterCount: filters.length
+    });
+
     return this.withTransaction(async () => {
       let totalCount = 0;
       for (const filter of filters) {
@@ -313,10 +577,21 @@ export abstract class BaseService<TModel = any> {
   // ==================== HOOKS ====================
 
   protected async beforeCreate(data: Partial<TModel>): Promise<Partial<TModel>> {
+    logger.trace("Executing beforeCreate hook", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName,
+      dataKeys: Object.keys(data)
+    });
+
     return data;
   }
 
   protected async afterCreate(result: TModel): Promise<TModel> {
+    logger.trace("Executing afterCreate hook", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName
+    });
+
     return result;
   }
 
@@ -324,24 +599,54 @@ export abstract class BaseService<TModel = any> {
     filter: QueryFilter,
     data: Partial<TModel>
   ): Promise<Partial<TModel>> {
+    logger.trace("Executing beforeUpdate hook", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName,
+      filterKeys: Object.keys(filter),
+      dataKeys: Object.keys(data)
+    });
+
     return data;
   }
 
   protected async afterUpdate(count: number): Promise<void> {
+    logger.trace("Executing afterUpdate hook", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName,
+      affectedCount: count
+    });
+
     // Hook for after update
   }
 
   protected async beforeDelete(filter: QueryFilter): Promise<void> {
+    logger.trace("Executing beforeDelete hook", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName,
+      filterKeys: Object.keys(filter)
+    });
+
     // Hook for before delete
   }
 
   protected async afterDelete(count: number): Promise<void> {
+    logger.trace("Executing afterDelete hook", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName,
+      affectedCount: count
+    });
+
     // Hook for after delete
   }
 
   // ==================== STATUS & LIFECYCLE ====================
 
   public getStatus(): ServiceStatus {
+    logger.trace("Getting service status", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName
+    });
+
     const daoStatus = this.dao?.getStatus(this.entityName) || {};
     return {
       schemaName: this.schemaKey,
@@ -356,10 +661,20 @@ export abstract class BaseService<TModel = any> {
   }
 
   public async close(): Promise<void> {
+    logger.info("Closing service", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName
+    });
+
     this.isOpened = false;
   }
 
   public destroy(): void {
+    logger.info("Destroying service", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName
+    });
+
     this.dao = null;
     this.isOpened = false;
   }
@@ -378,10 +693,29 @@ export abstract class BaseService<TModel = any> {
    * 🆕 Kiểm tra health của service
    */
   public async healthCheck(): Promise<boolean> {
+    logger.debug("Performing health check", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName
+    });
+
     try {
       await this.ensureInitialized();
-      return this.dao?.getAdapter().isConnected() || false;
+      const isHealthy = this.dao?.getAdapter().isConnected() || false;
+
+      logger.debug("Health check result", {
+        schemaKey: this.schemaKey,
+        entityName: this.entityName,
+        isHealthy
+      });
+
+      return isHealthy;
     } catch (error) {
+      logger.warn("Health check failed", {
+        schemaKey: this.schemaKey,
+        entityName: this.entityName,
+        error: (error as Error).message
+      });
+
       return false;
     }
   }
@@ -390,6 +724,11 @@ export abstract class BaseService<TModel = any> {
    * 🆕 Refresh connection (force reconnect)
    */
   public async refresh(): Promise<void> {
+    logger.info("Refreshing service connection", {
+      schemaKey: this.schemaKey,
+      entityName: this.entityName
+    });
+
     if (this.dao) {
       await this.dao.close();
     }

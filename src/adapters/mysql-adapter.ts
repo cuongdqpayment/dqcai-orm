@@ -6,6 +6,9 @@ import { BaseAdapter } from "../core/base-adapter";
 import { DatabaseType, EntitySchemaDefinition } from "../types/orm.types";
 import { QueryHelper } from "../utils/query-helper";
 
+import { createModuleLogger, ORMModules } from "../logger";
+const logger = createModuleLogger(ORMModules.MYSQL_ADAPTER);
+
 export class MySQLAdapter extends BaseAdapter {
   type: DatabaseType = "mysql";
   databaseType: DatabaseType = "mysql";
@@ -22,31 +25,43 @@ export class MySQLAdapter extends BaseAdapter {
    * - Object/Array → JSON stringify
    */
   protected sanitizeValue(value: any): any {
+    logger.trace("Sanitizing value", { valueType: typeof value });
+
     // Handle null/undefined
     if (value === null || value === undefined) {
+      logger.trace("Value is null/undefined, returning null");
       return null;
     }
 
     // Handle Date objects → MySQL datetime format
     if (value instanceof Date) {
-      return value.toISOString().slice(0, 19).replace('T', ' ');
+      const formattedDate = value.toISOString().slice(0, 19).replace('T', ' ');
+      logger.trace("Converted Date to MySQL datetime format");
+      return formattedDate;
     }
 
     // Handle boolean → 1/0
     if (typeof value === "boolean") {
-      return value ? 1 : 0;
+      const numericValue = value ? 1 : 0;
+      logger.trace("Converted Boolean to numeric", { original: value, converted: numericValue });
+      return numericValue;
     }
 
     // Handle arrays/objects → JSON stringify
     if (typeof value === "object" && !Buffer.isBuffer(value)) {
-      return JSON.stringify(value);
+      const jsonString = JSON.stringify(value);
+      logger.trace("Converted object/array to JSON string", { length: jsonString.length });
+      return jsonString;
     }
 
     // Handle strings (escape)
     if (typeof value === "string") {
-      return value.replace(/'/g, "''");
+      const escapedValue = value.replace(/'/g, "''");
+      logger.trace("Escaped string value");
+      return escapedValue;
     }
 
+    logger.trace("Value is primitive, returning as-is");
     return value;
   }
 
@@ -54,6 +69,8 @@ export class MySQLAdapter extends BaseAdapter {
    * ✅ MYSQL: Ánh xạ kiểu dữ liệu
    */
   protected mapFieldTypeToDBType(fieldType: string, length?: number): string {
+    logger.trace("Mapping field type to MySQL", { fieldType, length });
+
     const typeMap: Record<string, string> = {
       // String types
       string: length ? `VARCHAR(${length})` : "VARCHAR(255)",
@@ -93,7 +110,10 @@ export class MySQLAdapter extends BaseAdapter {
       blob: "BLOB",
     };
 
-    return typeMap[fieldType.toLowerCase()] || "VARCHAR(255)";
+    const mappedType = typeMap[fieldType.toLowerCase()] || "VARCHAR(255)";
+    logger.trace("Mapped type result", { fieldType, mappedType });
+
+    return mappedType;
   }
 
   /**
@@ -106,10 +126,16 @@ export class MySQLAdapter extends BaseAdapter {
     data: any,
     primaryKeys?: string[]
   ): Promise<any> {
+    logger.debug("Processing insert result", { 
+      tableName, 
+      hasInsertId: !!result.insertId 
+    });
+
     // MySQL trả về insertId
     const lastInsertId = result.insertId;
 
     if (!lastInsertId) {
+      logger.warn("No insert ID available, returning original data");
       return data; // Fallback nếu không có ID
     }
 
@@ -120,14 +146,25 @@ export class MySQLAdapter extends BaseAdapter {
       this.type
     )} WHERE ${QueryHelper.quoteIdentifier(pkField, this.type)} = ?`;
 
+    logger.trace("Executing select query for inserted record", { pkField, lastInsertId });
+
     const selectResult = await this.executeRaw(query, [lastInsertId]);
-    return selectResult.rows?.[0] || { ...data, [pkField]: lastInsertId };
+    const insertedRecord = selectResult.rows?.[0] || { ...data, [pkField]: lastInsertId };
+
+    logger.trace("Insert result processed", { 
+      tableName, 
+      pkField, 
+      lastInsertId 
+    });
+
+    return insertedRecord;
   }
 
   /**
    * ✅ MYSQL: Placeholder = ?
    */
   protected getPlaceholder(index: number): string {
+    logger.trace("Getting MySQL placeholder", { index });
     return "?";
   }
 
@@ -136,29 +173,46 @@ export class MySQLAdapter extends BaseAdapter {
   // ==========================================
 
   async executeRaw(query: string, params?: any[]): Promise<any> {
-    if (!this.pool) throw new Error("Not connected to MySQL");
+    logger.trace("Executing raw MySQL query", { 
+      querySnippet: query.substring(0, Math.min(100, query.length)) + (query.length > 100 ? '...' : ''), 
+      paramsCount: params?.length || 0 
+    });
+
+    if (!this.pool) {
+      logger.error("Not connected to MySQL");
+      throw new Error("Not connected to MySQL");
+    }
 
     const [rows, fields] = await this.pool.query(query, params);
 
     // Xử lý kết quả
     if (Array.isArray(rows)) {
-      return {
+      const result = {
         rows,
         rowCount: rows.length,
         rowsAffected: rows.length,
       };
+      logger.trace("SELECT query executed", { rowCount: rows.length });
+      return result;
     } else {
       // INSERT/UPDATE/DELETE result
-      return {
+      const result = {
         rows: [],
         rowCount: (rows as any).affectedRows || 0,
         rowsAffected: (rows as any).affectedRows || 0,
         insertId: (rows as any).insertId,
       };
+      logger.trace("Non-SELECT query executed", { 
+        affectedRows: result.rowsAffected, 
+        insertId: result.insertId 
+      });
+      return result;
     }
   }
 
   async tableExists(tableName: string): Promise<boolean> {
+    logger.trace("Checking table existence", { tableName });
+
     const query = `
       SELECT COUNT(*) as count
       FROM information_schema.tables
@@ -166,12 +220,18 @@ export class MySQLAdapter extends BaseAdapter {
       AND table_name = ?
     `;
     const result = await this.executeRaw(query, [tableName]);
-    return result.rows[0]?.count > 0;
+    const exists = result.rows[0]?.count > 0;
+
+    logger.trace("Table existence check result", { tableName, exists });
+
+    return exists;
   }
 
   async getTableInfo(
     tableName: string
   ): Promise<EntitySchemaDefinition | null> {
+    logger.debug("Getting table info", { tableName });
+
     const query = `
       SELECT column_name, data_type, is_nullable, column_default, column_key
       FROM information_schema.columns
@@ -180,7 +240,10 @@ export class MySQLAdapter extends BaseAdapter {
       ORDER BY ordinal_position
     `;
     const result = await this.executeRaw(query, [tableName]);
-    if (result.rows.length === 0) return null;
+    if (result.rows.length === 0) {
+      logger.debug("No table info found", { tableName });
+      return null;
+    }
 
     const cols = result.rows.map((row: any) => ({
       name: row.column_name,
@@ -190,7 +253,14 @@ export class MySQLAdapter extends BaseAdapter {
       primaryKey: row.column_key === "PRI",
     }));
 
-    return { name: tableName, cols };
+    const tableInfo = { name: tableName, cols };
+
+    logger.debug("Table info retrieved", { 
+      tableName, 
+      columnCount: cols.length 
+    });
+
+    return tableInfo;
   }
 
   // ==========================================
@@ -201,6 +271,11 @@ export class MySQLAdapter extends BaseAdapter {
    * 🔄 OVERRIDE: MySQL không hỗ trợ RETURNING
    */
   async insertOne(tableName: string, data: any): Promise<any> {
+    logger.debug("Inserting one record", { 
+      tableName, 
+      dataKeys: Object.keys(data) 
+    });
+
     this.ensureConnected();
     const keys = Object.keys(data);
 
@@ -217,22 +292,22 @@ export class MySQLAdapter extends BaseAdapter {
       this.type
     )} (${quotedKeys}) VALUES (${placeholders})`;
 
+    logger.trace("Executing insert query", { 
+      tableName, 
+      keyCount: keys.length,
+      placeholderCount: placeholders.split(',').length 
+    });
+
     const result = await this.executeRaw(query, values);
 
     // ✅ Process result (query lại)
-    return this.processInsertResult(tableName, result, data, ["id"]);
+    const insertedRecord = await this.processInsertResult(tableName, result, data, ["id"]);
+
+    logger.info("Inserted one record successfully", { 
+      tableName, 
+      insertedId: insertedRecord.id 
+    });
+
+    return insertedRecord;
   }
-}
-
-// ========================
-// src/adapters/mariadb-adapter.ts (REFACTORED)
-// ========================
-
-/**
- * MariaDB hoàn toàn tương thích với MySQL
- * Chỉ cần thay đổi type identifier
- */
-export class MariaDBAdapter extends MySQLAdapter {
-  type: DatabaseType = "mariadb";
-  databaseType: DatabaseType = "mariadb";
 }

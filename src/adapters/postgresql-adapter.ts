@@ -5,6 +5,8 @@
 import { BaseAdapter } from "../core/base-adapter";
 import { DatabaseType, EntitySchemaDefinition } from "../types/orm.types";
 import { QueryHelper } from "../utils/query-helper";
+import { createModuleLogger, ORMModules } from "../logger";
+const logger = createModuleLogger(ORMModules.POSTGRESQL_ADAPTER);
 
 export class PostgreSQLAdapter extends BaseAdapter {
   type: DatabaseType = "postgresql";
@@ -22,31 +24,42 @@ export class PostgreSQLAdapter extends BaseAdapter {
    * - Object/Array → JSON stringify
    */
   protected sanitizeValue(value: any): any {
+    logger.trace("Sanitizing value", { valueType: typeof value });
+
     // Handle null/undefined
     if (value === null || value === undefined) {
+      logger.trace("Value is null/undefined, returning null");
       return null;
     }
 
     // PostgreSQL hỗ trợ Date native, nhưng để đồng nhất ta convert
     if (value instanceof Date) {
-      return value.toISOString();
+      const isoString = value.toISOString();
+      logger.trace("Converted Date to ISO string");
+      return isoString;
     }
 
     // Boolean: Postgres hỗ trợ native
     if (typeof value === "boolean") {
+      logger.trace("Value is Boolean, keeping native");
       return value;
     }
 
     // Arrays/Objects → JSON
     if (typeof value === "object" && !Buffer.isBuffer(value)) {
-      return JSON.stringify(value);
+      const jsonString = JSON.stringify(value);
+      logger.trace("Converted object/array to JSON string", { length: jsonString.length });
+      return jsonString;
     }
 
     // Strings: escape single quotes
     if (typeof value === "string") {
-      return value.replace(/'/g, "''");
+      const escapedValue = value.replace(/'/g, "''");
+      logger.trace("Escaped string value");
+      return escapedValue;
     }
 
+    logger.trace("Value is primitive, returning as-is");
     return value;
   }
 
@@ -54,6 +67,8 @@ export class PostgreSQLAdapter extends BaseAdapter {
    * ✅ POSTGRESQL: Ánh xạ kiểu dữ liệu
    */
   protected mapFieldTypeToDBType(fieldType: string, length?: number): string {
+    logger.trace("Mapping field type to PostgreSQL", { fieldType, length });
+
     const typeMap: Record<string, string> = {
       // String types
       string: length ? `VARCHAR(${length})` : "TEXT",
@@ -93,7 +108,10 @@ export class PostgreSQLAdapter extends BaseAdapter {
       blob: "BYTEA",
     };
 
-    return typeMap[fieldType.toLowerCase()] || "TEXT";
+    const mappedType = typeMap[fieldType.toLowerCase()] || "TEXT";
+    logger.trace("Mapped type result", { fieldType, mappedType });
+
+    return mappedType;
   }
 
   /**
@@ -106,14 +124,21 @@ export class PostgreSQLAdapter extends BaseAdapter {
     data: any,
     primaryKeys?: string[]
   ): Promise<any> {
+    logger.trace("Processing insert result", { tableName, hasRows: !!result.rows?.length });
+
     // PostgreSQL trả về row trực tiếp qua RETURNING *
-    return result.rows?.[0] || data;
+    const processedResult = result.rows?.[0] || data;
+
+    logger.trace("Insert result processed", { tableName, resultKeys: Object.keys(processedResult) });
+
+    return processedResult;
   }
 
   /**
    * ✅ POSTGRESQL: Placeholder = $1, $2, $3...
    */
   protected getPlaceholder(index: number): string {
+    logger.trace("Getting PostgreSQL placeholder", { index });
     return `${index}`;
   }
 
@@ -122,20 +147,38 @@ export class PostgreSQLAdapter extends BaseAdapter {
   // ==========================================
 
   async executeRaw(query: string, params?: any[]): Promise<any> {
-    if (!this.pool) throw new Error("Not connected to PostgreSQL");
+    logger.trace("Executing raw PostgreSQL query", { 
+      querySnippet: query.substring(0, Math.min(100, query.length)) + (query.length > 100 ? '...' : ''), 
+      paramsCount: params?.length || 0 
+    });
+
+    if (!this.pool) {
+      logger.error("Not connected to PostgreSQL");
+      throw new Error("Not connected to PostgreSQL");
+    }
     const result = await this.pool.query(query, params);
+    logger.trace("Raw query executed", { rowCount: result.rowCount, command: result.command });
+
     return result;
   }
 
   async tableExists(tableName: string): Promise<boolean> {
+    logger.trace("Checking table existence", { tableName });
+
     const query = `SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = $1) as exists`;
     const result = await this.executeRaw(query, [tableName]);
-    return result.rows[0]?.exists || false;
+    const exists = result.rows[0]?.exists || false;
+
+    logger.trace("Table existence check result", { tableName, exists });
+
+    return exists;
   }
 
   async getTableInfo(
     tableName: string
   ): Promise<EntitySchemaDefinition | null> {
+    logger.debug("Getting table info", { tableName });
+
     const query = `
       SELECT column_name, data_type, is_nullable, column_default
       FROM information_schema.columns
@@ -143,7 +186,10 @@ export class PostgreSQLAdapter extends BaseAdapter {
       ORDER BY ordinal_position
     `;
     const result = await this.executeRaw(query, [tableName]);
-    if (result.rows.length === 0) return null;
+    if (result.rows.length === 0) {
+      logger.debug("No table info found", { tableName });
+      return null;
+    }
 
     const cols = result.rows.map((row: any) => ({
       name: row.column_name,
@@ -152,7 +198,14 @@ export class PostgreSQLAdapter extends BaseAdapter {
       default: row.column_default,
     }));
 
-    return { name: tableName, cols };
+    const tableInfo = { name: tableName, cols };
+
+    logger.debug("Table info retrieved", { 
+      tableName, 
+      columnCount: cols.length 
+    });
+
+    return tableInfo;
   }
 
   // ==========================================
@@ -163,6 +216,11 @@ export class PostgreSQLAdapter extends BaseAdapter {
    * 🔄 OVERRIDE: PostgreSQL hỗ trợ RETURNING *
    */
   async insertOne(tableName: string, data: any): Promise<any> {
+    logger.debug("Inserting one record", { 
+      tableName, 
+      dataKeys: Object.keys(data) 
+    });
+
     this.ensureConnected();
     const keys = Object.keys(data);
 
@@ -180,9 +238,22 @@ export class PostgreSQLAdapter extends BaseAdapter {
       this.type
     )} (${quotedKeys}) VALUES (${placeholders}) RETURNING *`;
 
+    logger.trace("Executing insert query", { 
+      tableName, 
+      keyCount: keys.length,
+      placeholderCount: placeholders.split(',').length 
+    });
+
     const result = await this.executeRaw(query, values);
 
     // ✅ Process result
-    return this.processInsertResult(tableName, result, data, ["id"]);
+    const insertedRecord = await this.processInsertResult(tableName, result, data, ["id"]);
+
+    logger.info("Inserted one record successfully", { 
+      tableName, 
+      insertedId: insertedRecord.id 
+    });
+
+    return insertedRecord;
   }
 }
