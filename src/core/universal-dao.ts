@@ -1,5 +1,5 @@
 // ========================
-// src/core/universal-dao.ts
+// src/core/universal-dao.ts (IMPROVED)
 // ========================
 
 import { IConnection, IResult, QueryFilter, QueryOptions } from "../types/orm.types";
@@ -9,7 +9,7 @@ import { DatabaseSchema, DatabaseType, DbConfig } from "../types/orm.types";
 import { ServiceStatus } from "../types/service.types";
 
 /**
- * Universal Data Access Object
+ * Universal Data Access Object - IMPROVED với reconnection logic
  */
 export class UniversalDAO<TConnection extends IConnection = IConnection> implements IDAO {
   protected adapter: IAdapter<TConnection>;
@@ -17,6 +17,11 @@ export class UniversalDAO<TConnection extends IConnection = IConnection> impleme
   public readonly schema: DatabaseSchema;
   public readonly databaseType: DatabaseType;
   public readonly dbConfig: DbConfig;
+  
+  // ✅ Thêm reconnection tracking
+  private reconnectAttempts: number = 0;
+  private maxReconnectAttempts: number = 3;
+  private reconnectDelay: number = 1000;
 
   constructor(adapter: IAdapter<TConnection>, schema: DatabaseSchema, dbConfig: DbConfig) {
     this.adapter = adapter;
@@ -25,17 +30,83 @@ export class UniversalDAO<TConnection extends IConnection = IConnection> impleme
     this.dbConfig = dbConfig;
   }
 
+  /**
+   * ✅ IMPROVED: Ensure connected với retry logic
+   */
   async ensureConnected(): Promise<TConnection> {
-    if (!this.connection || !this.connection.isConnected) {
-      this.connection = await this.adapter.connect(this.dbConfig);
+    // Nếu đã connected và còn sống
+    if (this.connection && this.connection.isConnected) {
+      return this.connection;
     }
-    return this.connection;
+
+    // Nếu connection bị stale, reset
+    if (this.connection && !this.connection.isConnected) {
+      this.connection = null;
+    }
+
+    // Retry connection
+    let lastError: Error | null = null;
+    for (let attempt = 0; attempt < this.maxReconnectAttempts; attempt++) {
+      try {
+        this.connection = await this.adapter.connect(this.dbConfig);
+        this.reconnectAttempts = 0; // Reset counter on success
+        return this.connection;
+      } catch (error) {
+        lastError = error as Error;
+        this.reconnectAttempts++;
+        
+        if (attempt < this.maxReconnectAttempts - 1) {
+          await this.sleep(this.reconnectDelay * (attempt + 1));
+        }
+      }
+    }
+
+    throw new Error(
+      `Failed to connect to ${this.schema.database_name} after ${this.maxReconnectAttempts} attempts: ${lastError?.message}`
+    );
   }
 
-  async execute(query: string | any, params?: any[]): Promise<IResult> {
-    const connection = await this.ensureConnected();
-    return await this.adapter.execute(connection, query, params);
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
+
+  /**
+   * ✅ IMPROVED: Execute với error handling tốt hơn
+   */
+  async execute(query: string | any, params?: any[]): Promise<IResult> {
+    try {
+      const connection = await this.ensureConnected();
+      return await this.adapter.execute(connection, query, params);
+    } catch (error) {
+      // Nếu lỗi connection, thử reconnect
+      if (this.isConnectionError(error)) {
+        console.warn(`Connection error detected, attempting reconnect...`);
+        this.connection = null;
+        const connection = await this.ensureConnected();
+        return await this.adapter.execute(connection, query, params);
+      }
+      throw error;
+    }
+  }
+
+  private isConnectionError(error: any): boolean {
+    const connectionErrorMessages = [
+      'connection',
+      'timeout',
+      'ECONNREFUSED',
+      'ENOTFOUND',
+      'ETIMEDOUT',
+      'socket',
+      'closed',
+      'lost',
+    ];
+    
+    const errorMessage = error?.message?.toLowerCase() || '';
+    return connectionErrorMessages.some((msg) => errorMessage.includes(msg));
+  }
+
+  // ==================== CRUD OPERATIONS ====================
+  // ✅ Tất cả methods đều sử dụng ensureConnected() nên đã có auto-reconnect
 
   async find<T = any>(entityName: string, query: QueryFilter, options?: QueryOptions): Promise<T[]> {
     await this.ensureConnected();
@@ -52,6 +123,9 @@ export class UniversalDAO<TConnection extends IConnection = IConnection> impleme
     return this.adapter.findById(entityName, id) as Promise<T | null>;
   }
 
+  /**
+   * ✅ Insert đã được Adapter xử lý sanitization trong insertOne()
+   */
   async insert<T = any>(entityName: string, data: Partial<T>): Promise<T> {
     await this.ensureConnected();
     return this.adapter.insertOne(entityName, data) as Promise<T>;
@@ -62,6 +136,9 @@ export class UniversalDAO<TConnection extends IConnection = IConnection> impleme
     return this.adapter.insertMany(entityName, data) as Promise<T[]>;
   }
 
+  /**
+   * ✅ Update đã được Adapter xử lý sanitization trong update()
+   */
   async update(entityName: string, filter: QueryFilter, data: any): Promise<number> {
     await this.ensureConnected();
     return this.adapter.update(entityName, filter, data);
@@ -97,6 +174,8 @@ export class UniversalDAO<TConnection extends IConnection = IConnection> impleme
     return this.adapter.count(entityName, filter);
   }
 
+  // ==================== LIFECYCLE ====================
+
   async close(): Promise<void> {
     if (this.connection && this.connection.isConnected) {
       await this.connection.close();
@@ -104,6 +183,9 @@ export class UniversalDAO<TConnection extends IConnection = IConnection> impleme
     }
   }
 
+  /**
+   * ✅ IMPROVED: Status với thông tin reconnection
+   */
   getStatus(entityName: string): Partial<ServiceStatus> {
     return {
       schemaName: this.schema.database_name,
@@ -111,7 +193,8 @@ export class UniversalDAO<TConnection extends IConnection = IConnection> impleme
       isOpened: !!this.connection && this.connection.isConnected,
       hasDao: true,
       isInitialized: true,
-      connectionStatus: this.adapter.isConnected() ? 'connected' : 'disconnected'
+      connectionStatus: this.adapter.isConnected() ? 'connected' : 'disconnected',
+      reconnectAttempts: this.reconnectAttempts,
     };
   }
 
@@ -121,5 +204,79 @@ export class UniversalDAO<TConnection extends IConnection = IConnection> impleme
 
   getSchema(): DatabaseSchema {
     return this.schema;
+  }
+
+  /**
+   * ✅ NEW: Health check
+   */
+  async healthCheck(): Promise<boolean> {
+    try {
+      await this.ensureConnected();
+      return this.adapter.isConnected();
+    } catch (error) {
+      return false;
+    }
+  }
+
+  /**
+   * ✅ NEW: Force reconnect
+   */
+  async reconnect(): Promise<void> {
+    await this.close();
+    this.connection = null;
+    await this.ensureConnected();
+  }
+
+  /**
+   * ✅ NEW: Kiểm tra table/collection exists
+   */
+  async tableExists(tableName: string): Promise<boolean> {
+    await this.ensureConnected();
+    return this.adapter.tableExists(tableName);
+  }
+
+  /**
+   * ✅ NEW: Tạo table/collection từ schema
+   */
+  async createTable(tableName: string): Promise<void> {
+    await this.ensureConnected();
+    
+    const entitySchema = this.schema.schemas[tableName];
+    if (!entitySchema) {
+      throw new Error(`Entity '${tableName}' not found in schema`);
+    }
+
+    const schemaDefinition: any = {};
+    for (const col of entitySchema.cols) {
+      const fieldName = col.name || "";
+      if (fieldName) {
+        schemaDefinition[fieldName] = col;
+      }
+    }
+
+    await this.adapter.createTable(tableName, schemaDefinition);
+  }
+
+  /**
+   * ✅ NEW: Sync tất cả tables/collections
+   */
+  async syncAllTables(): Promise<void> {
+    await this.ensureConnected();
+    
+    for (const [entityName, entitySchema] of Object.entries(this.schema.schemas)) {
+      const exists = await this.adapter.tableExists(entityName);
+      
+      if (!exists) {
+        console.log(`Creating table/collection: ${entityName}`);
+        const schemaDefinition: any = {};
+        for (const col of entitySchema.cols) {
+          const fieldName = col.name || "";
+          if (fieldName) {
+            schemaDefinition[fieldName] = col;
+          }
+        }
+        await this.adapter.createTable(entityName, schemaDefinition);
+      }
+    }
   }
 }

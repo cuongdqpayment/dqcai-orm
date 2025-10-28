@@ -1,5 +1,5 @@
 // ========================
-// src/adapters/oracle-adapter.ts
+// src/adapters/oracle-adapter.ts (REFACTORED)
 // ========================
 
 import { BaseAdapter } from "../core/base-adapter";
@@ -17,6 +17,130 @@ export class OracleAdapter extends BaseAdapter {
   private oracledb: any = null;
   private pool: any = null;
 
+  // ==========================================
+  // REQUIRED ABSTRACT METHOD IMPLEMENTATIONS
+  // ==========================================
+
+  /**
+   * ✅ ORACLE: Chuyển đổi kiểu dữ liệu
+   * - Date → ISO String hoặc Oracle DATE format
+   * - Boolean → 1/0 (NUMBER(1))
+   * - Object/Array → JSON stringify (CLOB)
+   */
+  protected sanitizeValue(value: any): any {
+    // Handle null/undefined
+    if (value === null || value === undefined) {
+      return null;
+    }
+
+    // Handle Date objects → Oracle DATE format
+    if (value instanceof Date) {
+      return value.toISOString();
+    }
+
+    // Handle boolean → 1/0
+    if (typeof value === "boolean") {
+      return value ? 1 : 0;
+    }
+
+    // Handle arrays/objects → JSON stringify (CLOB)
+    if (typeof value === "object" && !Buffer.isBuffer(value)) {
+      return JSON.stringify(value);
+    }
+
+    // Handle strings (escape single quotes)
+    if (typeof value === "string") {
+      return value.replace(/'/g, "''");
+    }
+
+    return value;
+  }
+
+  /**
+   * ✅ ORACLE: Ánh xạ kiểu dữ liệu
+   */
+  protected mapFieldTypeToDBType(fieldType: string, length?: number): string {
+    const typeMap: Record<string, string> = {
+      // String types
+      string: length ? `VARCHAR2(${length})` : "VARCHAR2(255)",
+      varchar: length ? `VARCHAR2(${length})` : "VARCHAR2(255)",
+      text: "CLOB",
+      char: length ? `CHAR(${length})` : "CHAR(1)",
+
+      // Number types
+      number: "NUMBER",
+      integer: "NUMBER(10)",
+      int: "NUMBER(10)",
+      bigint: "NUMBER(19)",
+      float: "BINARY_FLOAT",
+      double: "BINARY_DOUBLE",
+      decimal: "NUMBER",
+      numeric: "NUMBER",
+
+      // Boolean → NUMBER(1)
+      boolean: "NUMBER(1)",
+      bool: "NUMBER(1)",
+
+      // Date/Time
+      date: "DATE",
+      datetime: "TIMESTAMP",
+      timestamp: "TIMESTAMP",
+      time: "TIMESTAMP",
+
+      // JSON → CLOB
+      json: "CLOB",
+      jsonb: "CLOB",
+      array: "CLOB",
+      object: "CLOB",
+
+      // Others
+      uuid: "VARCHAR2(36)",
+      binary: "BLOB",
+      blob: "BLOB",
+    };
+
+    return typeMap[fieldType.toLowerCase()] || "VARCHAR2(255)";
+  }
+
+  /**
+   * ✅ ORACLE: Xử lý kết quả INSERT
+   * Oracle không hỗ trợ RETURNING dễ dàng, phải query lại
+   */
+  protected async processInsertResult(
+    tableName: string,
+    result: any,
+    data: any,
+    primaryKeys?: string[]
+  ): Promise<any> {
+    // Oracle trả về lastRowid
+    const lastRowid = result.lastRowid || result.lastInsertId;
+
+    if (!lastRowid) {
+      return data; // Fallback
+    }
+
+    // Query lại bản ghi vừa insert
+    const pkField = primaryKeys?.[0] || "id";
+    const query = `SELECT * FROM ${QueryHelper.quoteIdentifier(
+      tableName,
+      this.type
+    )} WHERE ${QueryHelper.quoteIdentifier(pkField, this.type)} = :1`;
+
+    const selectResult = await this.executeRaw(query, [lastRowid]);
+    return selectResult.rows?.[0] || { ...data, [pkField]: lastRowid };
+  }
+
+  /**
+   * ✅ ORACLE: Placeholder = :1, :2, :3...
+   */
+  protected getPlaceholder(index: number): string {
+    return `:${index}`;
+  }
+
+  // ==========================================
+  // ORACLE-SPECIFIC IMPLEMENTATIONS
+  // ==========================================
+
   async executeRaw(query: string, params?: any[]): Promise<any> {
     if (!this.pool) throw new Error("Not connected to Oracle");
     let conn;
@@ -31,6 +155,7 @@ export class OracleAdapter extends BaseAdapter {
         rows: result.rows || [],
         rowsAffected: result.rowsAffected || 0,
         lastInsertId: result.lastRowid,
+        lastRowid: result.lastRowid,
         metadata: result.metaData,
       };
     } catch (error) {
@@ -47,7 +172,7 @@ export class OracleAdapter extends BaseAdapter {
   }
 
   async tableExists(tableName: string): Promise<boolean> {
-    const query = `SELECT COUNT(*) as count FROM user_tables WHERE UPPER(table_name) = UPPER(:1)`;
+    const query = `SELECT COUNT(*) as COUNT FROM user_tables WHERE UPPER(table_name) = UPPER(:1)`;
     const result = await this.executeRaw(query, [tableName]);
     return result.rows[0]?.COUNT > 0;
   }
@@ -76,6 +201,10 @@ export class OracleAdapter extends BaseAdapter {
 
     return { name: tableName, cols };
   }
+
+  // ==========================================
+  // ORACLE-SPECIFIC: CREATE TABLE WITH SEQUENCES
+  // ==========================================
 
   async createTable(
     tableName: string,
@@ -142,20 +271,33 @@ export class OracleAdapter extends BaseAdapter {
     }
   }
 
+  // ==========================================
+  // OVERRIDE INSERT ONE (với sequence handling)
+  // ==========================================
+
+  /**
+   * 🔄 OVERRIDE: Oracle cần xử lý sequence
+   */
   async insertOne(tableName: string, data: any): Promise<any> {
     this.ensureConnected();
     const keys = Object.keys(data);
-    const values = Object.values(data);
+
+    // ✅ Sanitize all values
+    const values = Object.values(data).map((v) => this.sanitizeValue(v));
+
     const placeholders = keys.map((_, i) => `:${i + 1}`).join(", ");
     const quotedKeys = keys
       .map((k) => QueryHelper.quoteIdentifier(k, this.type))
       .join(", ");
-    const simpleQuery = `INSERT INTO ${QueryHelper.quoteIdentifier(
+
+    const query = `INSERT INTO ${QueryHelper.quoteIdentifier(
       tableName,
       this.type
     )} (${quotedKeys}) VALUES (${placeholders})`;
-    await this.raw(simpleQuery, values);
 
+    const result = await this.executeRaw(query, values);
+
+    // ✅ Process result (query lại với ROWID)
     const selectQuery = `
       SELECT * FROM ${QueryHelper.quoteIdentifier(tableName, this.type)}
       WHERE ROWID = (SELECT MAX(ROWID) FROM ${QueryHelper.quoteIdentifier(
@@ -163,28 +305,20 @@ export class OracleAdapter extends BaseAdapter {
         this.type
       )})
     `;
-    const result = await this.raw(selectQuery);
-    return result.rows?.[0] || data;
+    const selectResult = await this.raw(selectQuery);
+    return selectResult.rows?.[0] || data;
   }
 
-  protected getParamPlaceholder(index: number): string {
-    return `:${index}`;
-  }
+  // ==========================================
+  // ORACLE HELPER METHODS
+  // ==========================================
 
-  protected buildOracleColumnDefinition(
+  private buildOracleColumnDefinition(
     fieldName: string,
     fieldDef: FieldDefinition
   ): string {
     const quotedName = QueryHelper.quoteIdentifier(fieldName, this.type);
-    let oracleType = this.mapTypeToOracle(fieldDef.type);
-
-    if (
-      fieldDef.length &&
-      !fieldDef.type.includes("text") &&
-      !fieldDef.type.includes("lob")
-    ) {
-      oracleType += `(${fieldDef.length})`;
-    }
+    let oracleType = this.mapFieldTypeToDBType(fieldDef.type, fieldDef.length);
 
     if (fieldDef.precision && fieldDef.scale !== undefined) {
       oracleType = `NUMBER(${fieldDef.precision}, ${fieldDef.scale})`;
@@ -209,7 +343,7 @@ export class OracleAdapter extends BaseAdapter {
     }
 
     if (fieldDef.default !== undefined && !fieldDef.autoIncrement) {
-      columnDef += ` DEFAULT ${this.formatDefaultValue(fieldDef.default)}`;
+      columnDef += ` DEFAULT ${this.formatOracleDefaultValue(fieldDef.default)}`;
     }
 
     return columnDef;
@@ -243,37 +377,6 @@ export class OracleAdapter extends BaseAdapter {
     await this.raw(createTriggerQuery);
   }
 
-  private mapTypeToOracle(fieldType: string): string {
-    const typeMap: Record<string, string> = {
-      string: "VARCHAR2",
-      varchar: "VARCHAR2",
-      text: "CLOB",
-      char: "CHAR",
-      number: "NUMBER",
-      integer: "NUMBER",
-      int: "NUMBER",
-      bigint: "NUMBER(19)",
-      float: "BINARY_FLOAT",
-      double: "BINARY_DOUBLE",
-      decimal: "NUMBER",
-      numeric: "NUMBER",
-      boolean: "NUMBER(1)",
-      bool: "NUMBER(1)",
-      date: "DATE",
-      datetime: "TIMESTAMP",
-      timestamp: "TIMESTAMP",
-      time: "TIMESTAMP",
-      json: "CLOB",
-      jsonb: "CLOB",
-      array: "CLOB",
-      object: "CLOB",
-      uuid: "VARCHAR2(36)",
-      binary: "BLOB",
-      blob: "BLOB",
-    };
-    return typeMap[fieldType.toLowerCase()] || "VARCHAR2";
-  }
-
   private mapOracleTypeToFieldType(oracleType: string): string {
     const typeMap: Record<string, string> = {
       VARCHAR2: "string",
@@ -298,7 +401,7 @@ export class OracleAdapter extends BaseAdapter {
     return binds;
   }
 
-  protected formatDefaultValue(value: any): string {
+  private formatOracleDefaultValue(value: any): string {
     if (value === null) return "NULL";
     if (typeof value === "string") {
       if (

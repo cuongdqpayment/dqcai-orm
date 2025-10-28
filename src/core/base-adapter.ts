@@ -1,5 +1,5 @@
 // ========================
-// src/core/base-adapter.ts
+// src/core/base-adapter.ts (REFACTORED)
 // ========================
 import { IAdapter } from "../interfaces/adapter.interface";
 import {
@@ -30,13 +30,62 @@ export abstract class BaseAdapter implements IAdapter {
   protected connection: IConnection | null = null;
   protected config: DbConfig | null = null;
 
-  // Các phương thức abstract bắt buộc phải implement
+  // ==========================================
+  // 🆕 NEW ABSTRACT METHODS (MUST IMPLEMENT)
+  // ==========================================
+
+  /**
+   * Chuyển đổi giá trị JavaScript sang định dạng mà DB chấp nhận
+   * @param value - Giá trị cần chuyển đổi (Date, boolean, object, etc.)
+   * @returns Giá trị đã được sanitize phù hợp với DB
+   */
+  protected abstract sanitizeValue(value: any): any;
+
+  /**
+   * Ánh xạ FieldType chung sang kiểu dữ liệu vật lý của DB
+   * @param fieldType - Kiểu dữ liệu chung (string, boolean, date, etc.)
+   * @param length - Độ dài (optional)
+   * @returns Kiểu dữ liệu DB cụ thể (VARCHAR, NUMBER, TIMESTAMP, etc.)
+   */
+  protected abstract mapFieldTypeToDBType(
+    fieldType: string,
+    length?: number
+  ): string;
+
+  /**
+   * Xử lý kết quả trả về sau INSERT để lấy bản ghi đã tạo
+   * @param tableName - Tên bảng
+   * @param result - Kết quả raw từ executeRaw
+   * @param data - Dữ liệu đã insert
+   * @param primaryKeys - Danh sách primary key fields
+   * @returns Bản ghi đã được tạo với đầy đủ thông tin
+   */
+  protected abstract processInsertResult(
+    tableName: string,
+    result: any,
+    data: any,
+    primaryKeys?: string[]
+  ): Promise<any>;
+
+  /**
+   * Trả về ký tự placeholder cho tham số SQL
+   * @param index - Vị trí tham số (1-indexed)
+   * @returns Placeholder string ($1, ?, @p1, etc.)
+   */
+  protected abstract getPlaceholder(index: number): string;
+
+  // ==========================================
+  // EXISTING ABSTRACT METHODS
+  // ==========================================
   abstract executeRaw(query: string | any, params?: any[]): Promise<any>;
   abstract tableExists(tableName: string): Promise<boolean>;
-
   abstract getTableInfo(
     tableName: string
   ): Promise<EntitySchemaDefinition | null>;
+
+  // ==========================================
+  // CONNECTION MANAGEMENT
+  // ==========================================
 
   async connect(config: DbConfig): Promise<IConnection> {
     throw new Error("Connect method must be implemented by ConnectionFactory");
@@ -71,7 +120,10 @@ export abstract class BaseAdapter implements IAdapter {
     }
   }
 
-  // Schema Management
+  // ==========================================
+  // SCHEMA MANAGEMENT (REFACTORED)
+  // ==========================================
+
   async createTable(
     tableName: string,
     schema: SchemaDefinition
@@ -115,26 +167,36 @@ export abstract class BaseAdapter implements IAdapter {
     await this.raw(query);
   }
 
-  // CRUD Operations
+  // ==========================================
+  // CRUD OPERATIONS (REFACTORED)
+  // ==========================================
 
-  // Cập nhật insertOne method
+  /**
+   * 🔄 REFACTORED: Sử dụng sanitizeValue và processInsertResult
+   */
   async insertOne(tableName: string, data: any): Promise<any> {
     this.ensureConnected();
     const keys = Object.keys(data);
 
-    // ✅ Sanitize all values
+    // ✅ Sanitize all values using abstract method
     const values = Object.values(data).map((v) => this.sanitizeValue(v));
 
-    const placeholders = this.buildPlaceholders(keys.length);
+    const placeholders = keys
+      .map((_, i) => this.getPlaceholder(i + 1))
+      .join(", ");
     const quotedKeys = keys
       .map((k) => QueryHelper.quoteIdentifier(k, this.type))
       .join(", ");
+
     const query = `INSERT INTO ${QueryHelper.quoteIdentifier(
       tableName,
       this.type
-    )} (${quotedKeys}) VALUES (${placeholders}) RETURNING *`;
-    const result = await this.raw(query, values);
-    return result.rows?.[0] || data;
+    )} (${quotedKeys}) VALUES (${placeholders})`;
+
+    const result = await this.executeRaw(query, values);
+
+    // ✅ Process result using abstract method
+    return this.processInsertResult(tableName, result, data, ["id"]);
   }
 
   async insertMany(tableName: string, data: any[]): Promise<any[]> {
@@ -193,7 +255,9 @@ export abstract class BaseAdapter implements IAdapter {
     return this.findOne(tableName, { id } as QueryFilter);
   }
 
-  // Cập nhật update method
+  /**
+   * 🔄 REFACTORED: Sử dụng sanitizeValue
+   */
   async update(
     tableName: string,
     filter: QueryFilter,
@@ -211,20 +275,23 @@ export abstract class BaseAdapter implements IAdapter {
           `${QueryHelper.quoteIdentifier(
             key,
             this.type
-          )} = ${this.getParamPlaceholder(i + 1)}`
+          )} = ${this.getPlaceholder(i + 1)}`
       )
       .join(", ");
+
     const { clause, params: whereParams } = QueryHelper.buildWhereClause(
       filter,
       this.type,
       keys.length + 1
     );
     const allParams = [...values, ...whereParams];
+
     let query = `UPDATE ${QueryHelper.quoteIdentifier(
       tableName,
       this.type
     )} SET ${setClauses}`;
     if (clause !== "1=1") query += ` WHERE ${clause}`;
+
     const result = await this.raw(query, allParams);
     return result.rowsAffected || 0;
   }
@@ -302,47 +369,36 @@ export abstract class BaseAdapter implements IAdapter {
     };
   }
 
-  // Utility Methods
+  // ==========================================
+  // UTILITY METHODS (DEPRECATED - USE sanitizeValue)
+  // ==========================================
+
+  /**
+   * @deprecated Use sanitizeValue() instead
+   */
   sanitize(value: any): any {
     if (typeof value === "string") return value.replace(/'/g, "''");
     return value;
   }
 
-  // Thêm vào file base-adapter.ts
+  // ==========================================
+  // COLUMN & TABLE BUILDING (REFACTORED)
+  // ==========================================
 
-  protected sanitizeValue(value: any): any {
-    // Handle Date objects
-    if (value instanceof Date) {
-      return value.toISOString();
-    }
-
-    // Handle boolean for SQLite
-    if (typeof value === "boolean" && this.type === "sqlite") {
-      return value ? 1 : 0;
-    }
-
-    // Handle null/undefined
-    if (value === null || value === undefined) {
-      return null;
-    }
-
-    // Handle arrays/objects (stringify)
-    if (typeof value === "object") {
-      return JSON.stringify(value);
-    }
-
-    return value;
-  }
-
+  /**
+   * 🔄 REFACTORED: Sử dụng mapFieldTypeToDBType
+   */
   protected buildColumnDefinition(
     fieldName: string,
     fieldDef: FieldDefinition
   ): string {
     const quotedName = QueryHelper.quoteIdentifier(fieldName, this.type);
-    let sqlType = TypeMapper.mapType(fieldDef.type, this.type);
-    if (fieldDef.length && !fieldDef.type.includes("text"))
-      sqlType += `(${fieldDef.length})`;
+
+    // ✅ Use abstract method for type mapping
+    let sqlType = this.mapFieldTypeToDBType(fieldDef.type, fieldDef.length);
+
     let columnDef = `${quotedName} ${sqlType}`;
+
     if (fieldDef.primaryKey) columnDef += " PRIMARY KEY";
     if (fieldDef.autoIncrement)
       columnDef = this.buildAutoIncrementColumn(quotedName, sqlType);
@@ -350,6 +406,7 @@ export abstract class BaseAdapter implements IAdapter {
     if (fieldDef.unique) columnDef += " UNIQUE";
     if (fieldDef.default !== undefined)
       columnDef += ` DEFAULT ${this.formatDefaultValue(fieldDef.default)}`;
+
     return columnDef;
   }
 
@@ -413,39 +470,33 @@ export abstract class BaseAdapter implements IAdapter {
     return String(value);
   }
 
+  /**
+   * @deprecated Use getPlaceholder() instead
+   */
   protected buildPlaceholders(count: number): string {
     const placeholders: string[] = [];
     for (let i = 1; i <= count; i++) {
-      placeholders.push(this.getParamPlaceholder(i));
+      placeholders.push(this.getPlaceholder(i));
     }
     return placeholders.join(", ");
   }
 
+  /**
+   * @deprecated Use getPlaceholder() instead
+   */
   protected getParamPlaceholder(index: number): string {
-    switch (this.type) {
-      case "postgresql":
-        return `$${index}`;
-      case "oracle":
-        return `:${index}`;
-      case "mysql":
-      case "mariadb":
-      case "sqlite":
-        return "?";
-      case "sqlserver":
-        return `@p${index}`;
-      default:
-        return "?";
-    }
+    return this.getPlaceholder(index);
   }
 
-  // Index Management
+  // ==========================================
+  // INDEX MANAGEMENT
+  // ==========================================
 
   async createIndex(
     tableName: string,
     indexDef: IndexDefinition
   ): Promise<void> {
     this.ensureConnected();
-
     const uniqueStr = indexDef.unique ? "UNIQUE" : "";
     const fields = indexDef.fields
       .map((f) => QueryHelper.quoteIdentifier(f, this.type))
@@ -453,7 +504,6 @@ export abstract class BaseAdapter implements IAdapter {
     const query = `CREATE ${uniqueStr} INDEX ${
       indexDef.name
     } ON ${QueryHelper.quoteIdentifier(tableName, this.type)} (${fields})`;
-
     await this.raw(query);
   }
 
@@ -469,7 +519,6 @@ export abstract class BaseAdapter implements IAdapter {
     data: any
   ): Promise<any> {
     const existing = await this.findOne(tableName, filter);
-
     if (existing) {
       await this.updateOne(tableName, filter, data);
       return { ...existing, ...data };
@@ -483,7 +532,9 @@ export abstract class BaseAdapter implements IAdapter {
     return count > 0;
   }
 
-  // Advanced Operations
+  // ==========================================
+  // ADVANCED OPERATIONS
+  // ==========================================
 
   async aggregate(tableName: string, pipeline: any[]): Promise<any[]> {
     throw new Error(
@@ -497,22 +548,18 @@ export abstract class BaseAdapter implements IAdapter {
     filter?: QueryFilter
   ): Promise<any[]> {
     this.ensureConnected();
-
     const { clause, params } = QueryHelper.buildWhereClause(
       filter || {},
       this.type
     );
     const quotedField = QueryHelper.quoteIdentifier(field, this.type);
-
     let query = `SELECT DISTINCT ${quotedField} FROM ${QueryHelper.quoteIdentifier(
       tableName,
       this.type
     )}`;
-
     if (clause !== "1=1") {
       query += ` WHERE ${clause}`;
     }
-
     const result = await this.raw(query, params);
     return result.rows?.map((row: any) => row[field]) || [];
   }
@@ -522,7 +569,6 @@ export abstract class BaseAdapter implements IAdapter {
     operations: BulkOperation[]
   ): Promise<IResult> {
     this.ensureConnected();
-
     let totalAffected = 0;
     const insertedIds: any[] = [];
 
@@ -561,15 +607,12 @@ export abstract class BaseAdapter implements IAdapter {
     };
   }
 
-  // Raw Query & Execute
-
   async execute(
     connection: IConnection,
     query: string | any,
     params?: any[]
   ): Promise<IResult> {
     const result = await this.executeRaw(query, params);
-
     return {
       rows: result.rows || [],
       rowsAffected: result.rowsAffected || result.changes || 0,
@@ -578,143 +621,3 @@ export abstract class BaseAdapter implements IAdapter {
     };
   }
 }
-
-// ========================
-// EXAMPLE USAGE
-// ========================
-
-/*
-// File: user-app/src/database/setup.ts
-
-import { AdapterHelper } from "@dqcai/orm/helpers";
-import { PostgreSQLConnectionFactory } from "@dqcai/orm/factories";
-import { MySQLConnectionFactory } from "@dqcai/orm/factories";
-import { MongoDBConnectionFactory } from "@dqcai/orm/factories";
-
-// Example 1: PostgreSQL
-async function setupPostgreSQL() {
-  const adapter = await AdapterHelper.createAdapter(
-    "postgresql",
-    {
-      host: "localhost",
-      port: 5432,
-      database: "mydb",
-      username: "user",
-      password: "pass"
-    },
-    new PostgreSQLConnectionFactory()
-  );
-  
-  return adapter;
-}
-
-// Example 2: MySQL
-async function setupMySQL() {
-  const adapter = await AdapterHelper.createAdapter(
-    "mysql",
-    {
-      host: "localhost",
-      port: 3306,
-      database: "mydb",
-      user: "root",
-      password: "pass"
-    },
-    new MySQLConnectionFactory()
-  );
-  
-  return adapter;
-}
-
-// Example 3: MongoDB
-async function setupMongoDB() {
-  const adapter = await AdapterHelper.createAdapter(
-    "mongodb",
-    {
-      url: "mongodb://localhost:27017",
-      database: "mydb"
-    },
-    new MongoDBConnectionFactory()
-  );
-  
-  return adapter;
-}
-
-// Example 4: SQLite
-async function setupSQLite() {
-  const adapter = await AdapterHelper.createAdapter(
-    "sqlite",
-    {
-      filename: "./data/mydb.sqlite"
-    },
-    new SQLiteConnectionFactory()
-  );
-  
-  return adapter;
-}
-
-// Example 5: Oracle
-async function setupOracle() {
-  const adapter = await AdapterHelper.createAdapter(
-    "oracle",
-    {
-      user: "system",
-      password: "oracle",
-      connectString: "localhost:1521/XE"
-    },
-    new OracleConnectionFactory()
-  );
-  
-  return adapter;
-}
-
-// Example 6: SQL Server
-async function setupSQLServer() {
-  const adapter = await AdapterHelper.createAdapter(
-    "sqlserver",
-    {
-      server: "localhost",
-      database: "mydb",
-      user: "sa",
-      password: "YourStrong@Passw0rd",
-      options: {
-        encrypt: true,
-        trustServerCertificate: true
-      }
-    },
-    new SQLServerConnectionFactory()
-  );
-  
-  return adapter;
-}
-
-// Example 7: Using adapter
-async function exampleUsage() {
-  const adapter = await setupPostgreSQL();
-  
-  // Create table
-  await adapter.createTable("users", {
-    id: { type: "integer", primaryKey: true, autoIncrement: true },
-    name: { type: "string", length: 100, required: true },
-    email: { type: "string", length: 255, unique: true },
-    created_at: { type: "timestamp", default: "CURRENT_TIMESTAMP" }
-  });
-  
-  // Insert data
-  const user = await adapter.insertOne("users", {
-    name: "John Doe",
-    email: "john@example.com"
-  });
-  
-  // Find data
-  const users = await adapter.find("users", { name: "John Doe" });
-  
-  // Update data
-  await adapter.updateById("users", user.id, { name: "Jane Doe" });
-  
-  // Delete data
-  await adapter.deleteById("users", user.id);
-  
-  // Disconnect
-  await adapter.disconnect();
-}
-*/

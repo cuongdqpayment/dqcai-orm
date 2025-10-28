@@ -1,5 +1,5 @@
 // ========================
-// src/adapters/mongodb-adapter.ts
+// src/adapters/mongodb-adapter.ts (REFACTORED)
 // ========================
 
 import { BaseAdapter } from "../core/base-adapter";
@@ -18,6 +18,95 @@ export class MongoDBAdapter extends BaseAdapter {
   private client: any = null;
   private db: any = null;
   private ObjectId: any = null;
+
+  // ==========================================
+  // REQUIRED ABSTRACT METHOD IMPLEMENTATIONS
+  // ==========================================
+
+  /**
+   * ✅ MONGODB: Giữ nguyên kiểu dữ liệu JavaScript
+   * MongoDB hỗ trợ BSON nên không cần chuyển đổi nhiều
+   */
+  protected sanitizeValue(value: any): any {
+    // MongoDB hỗ trợ Date, Boolean native
+    // Chỉ cần xử lý ObjectId nếu cần
+    if (value === null || value === undefined) {
+      return null;
+    }
+
+    // Keep Date objects as-is (BSON supports Date)
+    if (value instanceof Date) {
+      return value;
+    }
+
+    // Keep Boolean as-is (BSON supports Boolean)
+    if (typeof value === "boolean") {
+      return value;
+    }
+
+    // Arrays và Objects giữ nguyên (BSON supports them)
+    if (typeof value === "object") {
+      return value;
+    }
+
+    return value;
+  }
+
+  /**
+   * ✅ MONGODB: Không cần ánh xạ kiểu (schemaless)
+   * MongoDB không yêu cầu schema nghiêm ngặt
+   */
+  protected mapFieldTypeToDBType(fieldType: string, length?: number): string {
+    // MongoDB không cần type mapping vì là schemaless
+    // Trả về tên BSON type để tham khảo
+    const bsonTypeMap: Record<string, string> = {
+      string: "string",
+      text: "string",
+      number: "number",
+      integer: "int",
+      bigint: "long",
+      float: "double",
+      double: "double",
+      boolean: "bool",
+      date: "date",
+      datetime: "date",
+      timestamp: "date",
+      json: "object",
+      jsonb: "object",
+      array: "array",
+      object: "object",
+      uuid: "string",
+      binary: "binData",
+    };
+
+    return bsonTypeMap[fieldType.toLowerCase()] || "string";
+  }
+
+  /**
+   * ✅ MONGODB: Xử lý kết quả INSERT
+   * MongoDB trả về insertedId trực tiếp
+   */
+  protected async processInsertResult(
+    collectionName: string,
+    result: any,
+    data: any,
+    primaryKeys?: string[]
+  ): Promise<any> {
+    // MongoDB trả về { ...data, _id: insertedId }
+    return { ...data, _id: result.insertedId };
+  }
+
+  /**
+   * ✅ MONGODB: Không sử dụng placeholder (NoSQL)
+   */
+  protected getPlaceholder(index: number): string {
+    // MongoDB không dùng placeholders
+    return "";
+  }
+
+  // ==========================================
+  // MONGODB-SPECIFIC IMPLEMENTATIONS
+  // ==========================================
 
   async executeRaw(query: any, params?: any[]): Promise<any> {
     if (!this.db) throw new Error("Not connected to MongoDB");
@@ -52,16 +141,41 @@ export class MongoDBAdapter extends BaseAdapter {
     await this.db.collection(collectionName).drop();
   }
 
+  // ==========================================
+  // CRUD OPERATIONS (MONGODB-SPECIFIC)
+  // ==========================================
+
+  /**
+   * 🔄 OVERRIDE: MongoDB insertOne
+   */
   async insertOne(collectionName: string, data: any): Promise<any> {
     if (!this.db) throw new Error("Not connected");
-    const result = await this.db.collection(collectionName).insertOne(data);
-    return { ...data, _id: result.insertedId };
+    
+    // ✅ Sanitize values (though MongoDB handles most types)
+    const sanitizedData = Object.entries(data).reduce((acc, [key, value]) => {
+      acc[key] = this.sanitizeValue(value);
+      return acc;
+    }, {} as any);
+
+    const result = await this.db.collection(collectionName).insertOne(sanitizedData);
+    
+    // ✅ Process result
+    return this.processInsertResult(collectionName, result, sanitizedData);
   }
 
   async insertMany(collectionName: string, data: any[]): Promise<any[]> {
     if (!this.db) throw new Error("Not connected");
-    const result = await this.db.collection(collectionName).insertMany(data);
-    return data.map((doc, i) => ({ ...doc, _id: result.insertedIds[i] }));
+    
+    // ✅ Sanitize all documents
+    const sanitizedData = data.map(doc => 
+      Object.entries(doc).reduce((acc, [key, value]) => {
+        acc[key] = this.sanitizeValue(value);
+        return acc;
+      }, {} as any)
+    );
+
+    const result = await this.db.collection(collectionName).insertMany(sanitizedData);
+    return sanitizedData.map((doc, i) => ({ ...doc, _id: result.insertedIds[i] }));
   }
 
   async find(
@@ -103,10 +217,17 @@ export class MongoDBAdapter extends BaseAdapter {
     data: any
   ): Promise<number> {
     if (!this.db) throw new Error("Not connected");
+    
+    // ✅ Sanitize update data
+    const sanitizedData = Object.entries(data).reduce((acc, [key, value]) => {
+      acc[key] = this.sanitizeValue(value);
+      return acc;
+    }, {} as any);
+
     const mongoFilter = this.convertFilterToMongo(filter);
     const result = await this.db
       .collection(collectionName)
-      .updateMany(mongoFilter, { $set: data });
+      .updateMany(mongoFilter, { $set: sanitizedData });
     return result.modifiedCount;
   }
 
@@ -116,10 +237,17 @@ export class MongoDBAdapter extends BaseAdapter {
     data: any
   ): Promise<boolean> {
     if (!this.db) throw new Error("Not connected");
+    
+    // ✅ Sanitize update data
+    const sanitizedData = Object.entries(data).reduce((acc, [key, value]) => {
+      acc[key] = this.sanitizeValue(value);
+      return acc;
+    }, {} as any);
+
     const mongoFilter = this.convertFilterToMongo(filter);
     const result = await this.db
       .collection(collectionName)
-      .updateOne(mongoFilter, { $set: data });
+      .updateOne(mongoFilter, { $set: sanitizedData });
     return result.modifiedCount > 0;
   }
 
@@ -209,6 +337,13 @@ export class MongoDBAdapter extends BaseAdapter {
     };
   }
 
+  // ==========================================
+  // MONGODB FILTER CONVERSION
+  // ==========================================
+
+  /**
+   * Chuyển đổi QueryFilter sang MongoDB query format
+   */
   private convertFilterToMongo(filter: QueryFilter): any {
     const mongoFilter: any = {};
     for (const [key, value] of Object.entries(filter)) {

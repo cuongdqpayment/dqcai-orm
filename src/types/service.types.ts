@@ -17,6 +17,7 @@ export interface ServiceStatus {
   lastAccess: string | null;
   connectionStatus?: string;
   recordCount?: number;
+  reconnectAttempts:number;
 }
 
 /**
