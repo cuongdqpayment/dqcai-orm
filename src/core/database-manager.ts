@@ -153,11 +153,11 @@ export class DatabaseManager {
         logger.debug("Registered adapter not connected, will auto-connect", { schemaKey });
       }
       
-      // Inject adapter vào options
+      // ✅ CRITICAL FIX: autoConnect = false vì adapter đã connected rồi
       options = {
         ...options,
         adapter: existingAdapter,
-        autoConnect: true // Đảm bảo auto-connect
+        autoConnect: false // KHÔNG gọi connect lại
       };
     } else {
       logger.debug("No registered adapter found, will create new one", { schemaKey });

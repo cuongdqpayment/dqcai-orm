@@ -375,12 +375,24 @@ export class DatabaseFactory {
 
     logger.debug("UniversalDAO instance created", { schemaKey });
 
-    // 5. Auto-connect nếu được yêu cầu
+    // 5. ✅ FIXED: Auto-connect chỉ khi adapter chưa connected
     const autoConnect = options?.autoConnect !== false;
-    if (autoConnect) {
-      logger.debug("Auto-connecting DAO", { schemaKey });
+    const needsConnection = autoConnect && !adapter.isConnected();
+    
+    if (needsConnection) {
+      logger.debug("Adapter not connected, auto-connecting DAO", { 
+        schemaKey,
+        adapterConnected: adapter.isConnected() 
+      });
       await dao.ensureConnected();
       logger.info("DAO connected successfully", { schemaKey });
+    } else if (adapter.isConnected()) {
+      logger.info("Adapter already connected, skipping auto-connect", { 
+        schemaKey,
+        adapterConnected: true 
+      });
+    } else {
+      logger.debug("Auto-connect disabled, skipping connection", { schemaKey });
     }
 
     // 6. Validate schema nếu được yêu cầu

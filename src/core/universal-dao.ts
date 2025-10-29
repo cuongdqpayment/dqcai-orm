@@ -1,5 +1,5 @@
 // ========================
-// src/core/universal-dao.ts (IMPROVED)
+// src/core/universal-dao.ts (FIXED CONNECTION HANDLING)
 // ========================
 
 import { IConnection, IResult, QueryFilter, QueryOptions } from "../types/orm.types";
@@ -12,7 +12,7 @@ import { createModuleLogger, ORMModules } from "../logger";
 const logger = createModuleLogger(ORMModules.UNIVERSAL_DAO);
 
 /**
- * Universal Data Access Object - IMPROVED với reconnection logic
+ * Universal Data Access Object - FIXED to reuse existing adapter connection
  */
 export class UniversalDAO<TConnection extends IConnection = IConnection> implements IDAO {
   protected adapter: IAdapter<TConnection>;
@@ -21,7 +21,7 @@ export class UniversalDAO<TConnection extends IConnection = IConnection> impleme
   public readonly databaseType: DatabaseType;
   public readonly dbConfig: DbConfig;
   
-  // ✅ Thêm reconnection tracking
+  // Reconnection tracking
   private reconnectAttempts: number = 0;
   private maxReconnectAttempts: number = 3;
   private reconnectDelay: number = 1000;
@@ -39,23 +39,35 @@ export class UniversalDAO<TConnection extends IConnection = IConnection> impleme
   }
 
   /**
-   * ✅ IMPROVED: Ensure connected với retry logic
+   * ✅ CRITICAL FIX: Ensure connected - Sử dụng lại connection của adapter
    */
   async ensureConnected(): Promise<TConnection> {
     logger.debug("Ensuring connection", {
       databaseName: this.schema.database_name,
-      databaseType: this.databaseType
+      databaseType: this.databaseType,
+      adapterConnected: this.adapter.isConnected()
     });
 
-    // Nếu đã connected và còn sống
+    // ✅ KEY FIX 1: Kiểm tra adapter đã có connection chưa
+    const existingConnection = this.adapter.getConnection();
+    if (existingConnection && existingConnection.isConnected) {
+      logger.info("Adapter already has active connection, reusing it", {
+        databaseName: this.schema.database_name,
+        databaseType: this.databaseType
+      });
+      this.connection = existingConnection as TConnection;
+      return this.connection;
+    }
+
+    // ✅ KEY FIX 2: Nếu DAO đã có connection và còn sống
     if (this.connection && this.connection.isConnected) {
-      logger.trace("Connection already active", {
+      logger.trace("DAO connection already active", {
         databaseName: this.schema.database_name
       });
       return this.connection;
     }
 
-    // Nếu connection bị stale, reset
+    // ✅ KEY FIX 3: Nếu connection bị stale, reset
     if (this.connection && !this.connection.isConnected) {
       logger.debug("Stale connection detected, resetting", {
         databaseName: this.schema.database_name
@@ -63,49 +75,76 @@ export class UniversalDAO<TConnection extends IConnection = IConnection> impleme
       this.connection = null;
     }
 
-    // Retry connection
-    let lastError: Error | null = null;
-    for (let attempt = 0; attempt < this.maxReconnectAttempts; attempt++) {
-      logger.debug("Connection attempt", {
-        attempt: attempt + 1,
-        maxAttempts: this.maxReconnectAttempts,
-        databaseName: this.schema.database_name
+    // ✅ KEY FIX 4: Chỉ connect nếu adapter chưa connected
+    if (!this.adapter.isConnected()) {
+      logger.info("Adapter not connected, establishing new connection", {
+        databaseName: this.schema.database_name,
+        databaseType: this.databaseType
       });
 
-      try {
-        this.connection = await this.adapter.connect(this.dbConfig);
-        this.reconnectAttempts = 0; // Reset counter on success
-        logger.info("Connected successfully", {
-          databaseName: this.schema.database_name,
-          databaseType: this.databaseType
-        });
-        return this.connection;
-      } catch (error) {
-        lastError = error as Error;
-        this.reconnectAttempts++;
-        
-        logger.warn("Connection attempt failed", {
+      // Retry connection
+      let lastError: Error | null = null;
+      for (let attempt = 0; attempt < this.maxReconnectAttempts; attempt++) {
+        logger.debug("Connection attempt", {
           attempt: attempt + 1,
           maxAttempts: this.maxReconnectAttempts,
-          databaseName: this.schema.database_name,
-          error: lastError.message
+          databaseName: this.schema.database_name
         });
-        
-        if (attempt < this.maxReconnectAttempts - 1) {
-          await this.sleep(this.reconnectDelay * (attempt + 1));
+
+        try {
+          this.connection = await this.adapter.connect(this.dbConfig);
+          this.reconnectAttempts = 0; // Reset counter on success
+          logger.info("Connected successfully", {
+            databaseName: this.schema.database_name,
+            databaseType: this.databaseType
+          });
+          return this.connection;
+        } catch (error) {
+          lastError = error as Error;
+          this.reconnectAttempts++;
+          
+          logger.warn("Connection attempt failed", {
+            attempt: attempt + 1,
+            maxAttempts: this.maxReconnectAttempts,
+            databaseName: this.schema.database_name,
+            error: lastError.message
+          });
+          
+          if (attempt < this.maxReconnectAttempts - 1) {
+            await this.sleep(this.reconnectDelay * (attempt + 1));
+          }
         }
       }
+
+      logger.error("Failed to connect after all attempts", {
+        databaseName: this.schema.database_name,
+        attempts: this.maxReconnectAttempts,
+        lastError: lastError?.message
+      });
+
+      throw new Error(
+        `Failed to connect to ${this.schema.database_name} after ${this.maxReconnectAttempts} attempts: ${lastError?.message}`
+      );
     }
 
-    logger.error("Failed to connect after all attempts", {
+    // ✅ KEY FIX 5: Adapter đã connected, lấy connection từ nó
+    logger.info("Reusing adapter's existing connection", {
       databaseName: this.schema.database_name,
-      attempts: this.maxReconnectAttempts,
-      lastError: lastError?.message
+      databaseType: this.databaseType
     });
+    
+    const adapterConnection = this.adapter.getConnection();
+    if (!adapterConnection) {
+      logger.error("Adapter reports connected but has no connection object", {
+        databaseName: this.schema.database_name
+      });
+      throw new Error(
+        `Adapter for ${this.schema.database_name} is connected but has no connection object`
+      );
+    }
 
-    throw new Error(
-      `Failed to connect to ${this.schema.database_name} after ${this.maxReconnectAttempts} attempts: ${lastError?.message}`
-    );
+    this.connection = adapterConnection as TConnection;
+    return this.connection;
   }
 
   private sleep(ms: number): Promise<void> {
@@ -162,7 +201,7 @@ export class UniversalDAO<TConnection extends IConnection = IConnection> impleme
   }
 
   // ==================== CRUD OPERATIONS ====================
-  // ✅ Tất cả methods đều sử dụng ensureConnected() nên đã có auto-reconnect
+  // Tất cả methods đều sử dụng ensureConnected() nên đã có auto-reconnect
 
   async find<T = any>(entityName: string, query: QueryFilter, options?: QueryOptions): Promise<T[]> {
     logger.trace("Finding records", {
@@ -197,9 +236,6 @@ export class UniversalDAO<TConnection extends IConnection = IConnection> impleme
     return this.adapter.findById(entityName, id) as Promise<T | null>;
   }
 
-  /**
-   * ✅ Insert đã được Adapter xử lý sanitization trong insertOne()
-   */
   async insert<T = any>(entityName: string, data: Partial<T>): Promise<T> {
     logger.debug("Inserting record", {
       entityName,
@@ -222,9 +258,6 @@ export class UniversalDAO<TConnection extends IConnection = IConnection> impleme
     return this.adapter.insertMany(entityName, data) as Promise<T[]>;
   }
 
-  /**
-   * ✅ Update đã được Adapter xử lý sanitization trong update()
-   */
   async update(entityName: string, filter: QueryFilter, data: any): Promise<number> {
     logger.debug("Updating records", {
       entityName,
@@ -320,7 +353,7 @@ export class UniversalDAO<TConnection extends IConnection = IConnection> impleme
   }
 
   /**
-   * ✅ IMPROVED: Status với thông tin reconnection
+   * Status với thông tin reconnection
    */
   getStatus(entityName: string): Partial<ServiceStatus> {
     return {
@@ -343,7 +376,7 @@ export class UniversalDAO<TConnection extends IConnection = IConnection> impleme
   }
 
   /**
-   * ✅ NEW: Health check
+   * Health check
    */
   async healthCheck(): Promise<boolean> {
     logger.debug("Performing health check", {
@@ -363,7 +396,7 @@ export class UniversalDAO<TConnection extends IConnection = IConnection> impleme
   }
 
   /**
-   * ✅ NEW: Force reconnect
+   * Force reconnect
    */
   async reconnect(): Promise<void> {
     logger.info("Force reconnecting DAO", {
@@ -377,7 +410,7 @@ export class UniversalDAO<TConnection extends IConnection = IConnection> impleme
   }
 
   /**
-   * ✅ NEW: Kiểm tra table/collection exists
+   * Kiểm tra table/collection exists
    */
   async tableExists(tableName: string): Promise<boolean> {
     logger.trace("Checking table existence", {
@@ -390,7 +423,7 @@ export class UniversalDAO<TConnection extends IConnection = IConnection> impleme
   }
 
   /**
-   * ✅ NEW: Tạo table/collection từ schema
+   * Tạo table/collection từ schema
    */
   async createTable(tableName: string): Promise<void> {
     logger.debug("Creating table", {
@@ -421,7 +454,7 @@ export class UniversalDAO<TConnection extends IConnection = IConnection> impleme
   }
 
   /**
-   * ✅ NEW: Sync tất cả tables/collections
+   * Sync tất cả tables/collections
    */
   async syncAllTables(): Promise<void> {
     logger.info("Syncing all tables", {
