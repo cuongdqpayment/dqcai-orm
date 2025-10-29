@@ -1,5 +1,5 @@
 // ========================
-// src/adapters/postgresql-adapter.ts (REFACTORED)
+// src/adapters/postgresql-adapter.ts (FIXED)
 // ========================
 
 import { BaseAdapter } from "../core/base-adapter";
@@ -18,11 +18,7 @@ export class PostgreSQLAdapter extends BaseAdapter {
   databaseType: DatabaseType = "postgresql";
   private pool: any = null;
 
-  /*
-  Chuyển 2 hàm isSupported và connect về luôn Adapter, không cần tạo connection nữa
-  */
   isSupported(): boolean {
-    // Nếu đã connect → supported
     if (this.pool || this.isConnected()) {
       return true;
     }
@@ -32,11 +28,9 @@ export class PostgreSQLAdapter extends BaseAdapter {
     try {
       require.resolve("pg");
       logger.debug("PostgreSQL module 'pg' is supported");
-
       return true;
     } catch {
       logger.debug("PostgreSQL module 'pg' is not supported");
-
       return false;
     }
   }
@@ -50,15 +44,12 @@ export class PostgreSQLAdapter extends BaseAdapter {
 
     try {
       logger.trace("Dynamically importing 'pg' module");
-
       const { Pool } = await import("pg");
 
       logger.trace("Creating PostgreSQL Pool instance");
-
       const pool = new Pool(config as any);
 
       logger.trace("Creating IConnection object");
-
       const connection: IConnection = {
         rawConnection: pool,
         isConnected: true,
@@ -90,39 +81,30 @@ export class PostgreSQLAdapter extends BaseAdapter {
       throw new Error(`PostgreSQL connection failed: ${error}`);
     }
   }
+
   // ==========================================
   // REQUIRED ABSTRACT METHOD IMPLEMENTATIONS
   // ==========================================
 
-  /**
-   * ✅ POSTGRESQL: Chuyển đổi kiểu dữ liệu
-   * - Date → ISO String (Postgres driver tự xử lý)
-   * - Boolean → true/false (native support)
-   * - Object/Array → JSON stringify
-   */
   protected sanitizeValue(value: any): any {
     logger.trace("Sanitizing value", { valueType: typeof value });
 
-    // Handle null/undefined
     if (value === null || value === undefined) {
       logger.trace("Value is null/undefined, returning null");
       return null;
     }
 
-    // PostgreSQL hỗ trợ Date native, nhưng để đồng nhất ta convert
     if (value instanceof Date) {
       const isoString = value.toISOString();
       logger.trace("Converted Date to ISO string");
       return isoString;
     }
 
-    // Boolean: Postgres hỗ trợ native
     if (typeof value === "boolean") {
       logger.trace("Value is Boolean, keeping native");
       return value;
     }
 
-    // Arrays/Objects → JSON
     if (typeof value === "object" && !Buffer.isBuffer(value)) {
       const jsonString = JSON.stringify(value);
       logger.trace("Converted object/array to JSON string", {
@@ -131,31 +113,26 @@ export class PostgreSQLAdapter extends BaseAdapter {
       return jsonString;
     }
 
-    // Strings: escape single quotes
     if (typeof value === "string") {
-      const escapedValue = value.replace(/'/g, "''");
-      logger.trace("Escaped string value");
-      return escapedValue;
+      // ❌ KHÔNG ESCAPE ở đây vì pg driver sẽ handle
+      // PostgreSQL driver tự động escape khi dùng parameterized queries
+      logger.trace("String value, returning as-is for pg driver");
+      return value;
     }
 
     logger.trace("Value is primitive, returning as-is");
     return value;
   }
 
-  /**
-   * ✅ POSTGRESQL: Ánh xạ kiểu dữ liệu
-   */
   protected mapFieldTypeToDBType(fieldType: string, length?: number): string {
     logger.trace("Mapping field type to PostgreSQL", { fieldType, length });
 
     const typeMap: Record<string, string> = {
-      // String types
       string: length ? `VARCHAR(${length})` : "TEXT",
       varchar: length ? `VARCHAR(${length})` : "VARCHAR(255)",
       text: "TEXT",
       char: length ? `CHAR(${length})` : "CHAR(1)",
 
-      // Number types
       number: "NUMERIC",
       integer: "INTEGER",
       int: "INTEGER",
@@ -165,23 +142,19 @@ export class PostgreSQLAdapter extends BaseAdapter {
       decimal: "DECIMAL",
       numeric: "NUMERIC",
 
-      // Boolean → BOOLEAN (native)
       boolean: "BOOLEAN",
       bool: "BOOLEAN",
 
-      // Date/Time
       date: "DATE",
       datetime: "TIMESTAMP",
       timestamp: "TIMESTAMP",
       time: "TIME",
 
-      // JSON (native support)
       json: "JSON",
       jsonb: "JSONB",
       array: "JSONB",
       object: "JSONB",
 
-      // Others
       uuid: "UUID",
       binary: "BYTEA",
       blob: "BYTEA",
@@ -193,10 +166,6 @@ export class PostgreSQLAdapter extends BaseAdapter {
     return mappedType;
   }
 
-  /**
-   * ✅ POSTGRESQL: Xử lý kết quả INSERT
-   * PostgreSQL hỗ trợ RETURNING * nên đơn giản
-   */
   protected async processInsertResult(
     tableName: string,
     result: any,
@@ -208,7 +177,6 @@ export class PostgreSQLAdapter extends BaseAdapter {
       hasRows: !!result.rows?.length,
     });
 
-    // PostgreSQL trả về row trực tiếp qua RETURNING *
     const processedResult = result.rows?.[0] || data;
 
     logger.trace("Insert result processed", {
@@ -220,11 +188,11 @@ export class PostgreSQLAdapter extends BaseAdapter {
   }
 
   /**
-   * ✅ POSTGRESQL: Placeholder = $1, $2, $3...
+   * ✅ FIX: PostgreSQL sử dụng $1, $2, $3... làm placeholder
    */
   protected getPlaceholder(index: number): string {
     logger.trace("Getting PostgreSQL placeholder", { index });
-    return `${index}`;
+    return `$${index}`;  // ✅ PHẢI CÓ DẤU $
   }
 
   // ==========================================
@@ -243,7 +211,9 @@ export class PostgreSQLAdapter extends BaseAdapter {
       logger.error("Not connected to PostgreSQL");
       throw new Error("Not connected to PostgreSQL");
     }
+
     const result = await this.pool.query(query, params);
+
     logger.trace("Raw query executed", {
       rowCount: result.rowCount,
       command: result.command,
@@ -276,6 +246,7 @@ export class PostgreSQLAdapter extends BaseAdapter {
       ORDER BY ordinal_position
     `;
     const result = await this.executeRaw(query, [tableName]);
+
     if (result.rows.length === 0) {
       logger.debug("No table info found", { tableName });
       return null;
@@ -299,11 +270,12 @@ export class PostgreSQLAdapter extends BaseAdapter {
   }
 
   // ==========================================
-  // OVERRIDE INSERT ONE (với RETURNING *)
+  // ✅ OVERRIDE INSERT ONE - Sử dụng RETURNING *
   // ==========================================
 
   /**
-   * 🔄 OVERRIDE: PostgreSQL hỗ trợ RETURNING *
+   * 🔄 OVERRIDE: PostgreSQL hỗ trợ RETURNING * để lấy record vừa insert
+   * ⚠️ KHÔNG tự build placeholders, dùng getPlaceholder() từ parent class
    */
   async insertOne(tableName: string, data: any): Promise<any> {
     logger.debug("Inserting one record", {
@@ -315,14 +287,18 @@ export class PostgreSQLAdapter extends BaseAdapter {
     const keys = Object.keys(data);
 
     // ✅ Sanitize all values
-    const values = Object.values(data).map((v) => this.sanitizeValue(v));
+    const values = keys.map((key) => this.sanitizeValue(data[key]));
 
-    const placeholders = keys.map((_, i) => `${i + 1}`).join(", ");
+    // ✅ Dùng getPlaceholder() để đảm bảo đúng format $1, $2, $3...
+    const placeholders = keys
+      .map((_, i) => this.getPlaceholder(i + 1))
+      .join(", ");
+
     const quotedKeys = keys
       .map((k) => QueryHelper.quoteIdentifier(k, this.type))
       .join(", ");
 
-    // PostgreSQL hỗ trợ RETURNING *
+    // ✅ PostgreSQL hỗ trợ RETURNING * để lấy record vừa tạo
     const query = `INSERT INTO ${QueryHelper.quoteIdentifier(
       tableName,
       this.type
@@ -330,13 +306,14 @@ export class PostgreSQLAdapter extends BaseAdapter {
 
     logger.trace("Executing insert query", {
       tableName,
+      query: query.substring(0, 150),
       keyCount: keys.length,
-      placeholderCount: placeholders.split(",").length,
+      valueCount: values.length,
     });
 
     const result = await this.executeRaw(query, values);
 
-    // ✅ Process result
+    // ✅ Process result using abstract method
     const insertedRecord = await this.processInsertResult(
       tableName,
       result,
@@ -350,5 +327,107 @@ export class PostgreSQLAdapter extends BaseAdapter {
     });
 
     return insertedRecord;
+  }
+
+  // ==========================================
+  // ✅ OVERRIDE UPDATE - PostgreSQL specific
+  // ==========================================
+
+  async update(
+    tableName: string,
+    filter: any,
+    data: any
+  ): Promise<number> {
+    logger.debug("Updating records", {
+      tableName,
+      keys: Object.keys(data),
+      filter,
+    });
+
+    this.ensureConnected();
+    const keys = Object.keys(data);
+
+    // ✅ Sanitize values
+    const values = keys.map((key) => this.sanitizeValue(data[key]));
+
+    // ✅ Build SET clause với $1, $2, $3...
+    const setClauses = keys
+      .map(
+        (key, i) =>
+          `${QueryHelper.quoteIdentifier(key, this.type)} = ${this.getPlaceholder(i + 1)}`
+      )
+      .join(", ");
+
+    // ✅ Build WHERE clause với placeholder bắt đầu từ index sau SET
+    const { clause, params: whereParams } = QueryHelper.buildWhereClause(
+      filter,
+      this.type,
+      keys.length + 1
+    );
+
+    const allParams = [...values, ...whereParams];
+
+    let query = `UPDATE ${QueryHelper.quoteIdentifier(
+      tableName,
+      this.type
+    )} SET ${setClauses}`;
+
+    if (clause !== "1=1") {
+      query += ` WHERE ${clause}`;
+    }
+
+    logger.trace("Executing update query", {
+      tableName,
+      query: query.substring(0, 150),
+      paramCount: allParams.length,
+    });
+
+    const result = await this.executeRaw(query, allParams);
+    const affected = result.rowCount || 0;
+
+    if (affected === 0) {
+      logger.warn("No records updated", { tableName });
+    } else {
+      logger.info("Updated records successfully", { tableName, affected });
+    }
+
+    return affected;
+  }
+
+  // ==========================================
+  // ✅ OVERRIDE DELETE
+  // ==========================================
+
+  async delete(tableName: string, filter: any): Promise<number> {
+    logger.debug("Deleting records", { tableName, filter });
+
+    this.ensureConnected();
+    const { clause, params } = QueryHelper.buildWhereClause(filter, this.type);
+
+    let query = `DELETE FROM ${QueryHelper.quoteIdentifier(
+      tableName,
+      this.type
+    )}`;
+
+    if (clause !== "1=1") {
+      query += ` WHERE ${clause}`;
+    }
+
+    logger.trace("Executing delete query", {
+      tableName,
+      query,
+      paramCount: params.length,
+    });
+
+    const result = await this.executeRaw(query, params);
+    const affected = result.rowCount || 0;
+
+    if (affected === 0) {
+      logger.warn("No records deleted", { tableName });
+    } else {
+      logger.info("Deleted records successfully", { tableName, affected });
+    }
+
+    return affected;
   }
 }

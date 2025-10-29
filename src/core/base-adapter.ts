@@ -1,5 +1,5 @@
 // ========================
-// src/core/base-adapter.ts (FULLY REFACTORED)
+// src/core/base-adapter.ts (FIXED)
 // ========================
 import { IAdapter } from "../interfaces/adapter.interface";
 import {
@@ -21,15 +21,6 @@ import { QueryHelper } from "../utils/query-helper";
 import { createModuleLogger, ORMModules } from "../logger";
 const logger = createModuleLogger(ORMModules.BASE_ADAPTER);
 
-/**
- * 🎯 Base Adapter - Học từ UniversalDAO của @dqcai/sqlite và @dqcai/mongo
- *
- * Key improvements:
- * 1. Sanitization đầy đủ cho từng loại DB
- * 2. Type mapping chính xác
- * 3. Insert result processing thống nhất
- * 4. Error handling tốt hơn
- */
 export abstract class BaseAdapter implements IAdapter {
   alterTable(tableName: string, changes: SchemaDefinition): Promise<void> {
     throw new Error("Method not implemented.");
@@ -49,6 +40,7 @@ export abstract class BaseAdapter implements IAdapter {
   sanitize(value: any) {
     throw new Error("Method not implemented.");
   }
+  
   abstract type: DatabaseType;
   abstract databaseType: DatabaseType;
 
@@ -59,45 +51,17 @@ export abstract class BaseAdapter implements IAdapter {
   // 🆕 ABSTRACT METHODS - MUST IMPLEMENT
   // ==========================================
 
-  /**
-   * 🔄 Sanitize value theo từng loại database
-   * - SQLite: Date → ISO string, Boolean → 0/1, Object → JSON string
-   * - MongoDB: Giữ nguyên Date, Boolean, Object (BSON hỗ trợ native)
-   * - PostgreSQL/MySQL: Xử lý timestamp, boolean theo SQL standard
-   */
   protected abstract sanitizeValue(value: any): any;
-
-  /**
-   * 🗺️ Map từ generic type sang DB-specific type
-   * - SQLite: TEXT, INTEGER, REAL, BLOB
-   * - MongoDB: String, Number, Date, ObjectId, Object, Array
-   * - PostgreSQL: VARCHAR, INTEGER, TIMESTAMP, JSONB
-   */
   protected abstract mapFieldTypeToDBType(
     fieldType: string,
     length?: number
   ): string;
-
-  /**
-   * 📊 Process INSERT result để lấy bản ghi đã tạo
-   * - SQLite: Dùng lastInsertRowid + SELECT lại
-   * - MongoDB: Trả về document với _id từ insertedId
-   * - PostgreSQL: Dùng RETURNING clause
-   */
   protected abstract processInsertResult(
     tableName: string,
     result: any,
     data: any,
     primaryKeys?: string[]
   ): Promise<any>;
-
-  /**
-   * 🔢 Placeholder cho parameters
-   * - SQLite: ?
-   * - PostgreSQL: $1, $2, $3...
-   * - MySQL: ?
-   * - MongoDB: không dùng (NoSQL)
-   */
   protected abstract getPlaceholder(index: number): string;
 
   // Required methods from IAdapter
@@ -108,7 +72,7 @@ export abstract class BaseAdapter implements IAdapter {
   ): Promise<EntitySchemaDefinition | null>;
 
   // ==========================================
-  // 🔌 CONNECTION MANAGEMENT (IMPROVED)
+  // 🔌 CONNECTION MANAGEMENT
   // ==========================================
 
   isSupported(): boolean {
@@ -116,6 +80,7 @@ export abstract class BaseAdapter implements IAdapter {
       "isSupported method must be implemented by DatabaseAdapter"
     );
   }
+  
   async connect(config: DbConfig): Promise<IConnection> {
     throw new Error("Connect method must be implemented by DatabaseAdapter");
   }
@@ -205,27 +170,30 @@ export abstract class BaseAdapter implements IAdapter {
   }
 
   // ==========================================
-  // 💾 CRUD OPERATIONS (REFACTORED WITH SANITIZATION)
+  // 💾 CRUD OPERATIONS
   // ==========================================
 
   /**
-   * ✅ INSERT ONE - Với sanitization và proper result processing
+   * ✅ INSERT ONE - Base implementation
+   * ⚠️ Derived classes có thể override để tối ưu (như PostgreSQL RETURNING)
    */
   async insertOne(tableName: string, data: any): Promise<any> {
     logger.debug("Inserting one record", {
       tableName,
-      keys: Object.keys(data),
+      dataKeys: Object.keys(data),
     });
 
     this.ensureConnected();
     const keys = Object.keys(data);
 
-    // 🔄 Sanitize all values
+    // ✅ Sanitize all values using abstract method
     const values = keys.map((key) => this.sanitizeValue(data[key]));
 
+    // ✅ Build placeholders using abstract method
     const placeholders = keys
       .map((_, i) => this.getPlaceholder(i + 1))
       .join(", ");
+
     const quotedKeys = keys
       .map((k) => QueryHelper.quoteIdentifier(k, this.type))
       .join(", ");
@@ -235,9 +203,15 @@ export abstract class BaseAdapter implements IAdapter {
       this.type
     )} (${quotedKeys}) VALUES (${placeholders})`;
 
+    logger.trace("Executing insert query", {
+      tableName,
+      query: query.substring(0, 150),
+      valueCount: values.length,
+    });
+
     const result = await this.executeRaw(query, values);
 
-    // 📊 Process result (DB-specific)
+    // ✅ Process result using abstract method
     const inserted = await this.processInsertResult(tableName, result, data, [
       "id",
     ]);
@@ -247,16 +221,12 @@ export abstract class BaseAdapter implements IAdapter {
     return inserted;
   }
 
-  /**
-   * ✅ INSERT MANY - Batch insert với transaction
-   */
   async insertMany(tableName: string, data: any[]): Promise<any[]> {
     logger.info("Inserting many records", { tableName, count: data.length });
 
     this.ensureConnected();
     if (data.length === 0) return [];
 
-    // Nếu DB hỗ trợ bulk insert native, override method này
     const results = [];
     for (const item of data) {
       results.push(await this.insertOne(tableName, item));
@@ -265,7 +235,7 @@ export abstract class BaseAdapter implements IAdapter {
   }
 
   /**
-   * ✅ FIND - Query với filter
+   * ✅ FIND
    */
   async find(
     tableName: string,
@@ -300,9 +270,15 @@ export abstract class BaseAdapter implements IAdapter {
     if (options?.offset || options?.skip)
       query += ` OFFSET ${options.offset || options.skip}`;
 
-    const result = await this.raw(query, params);
+    logger.trace("Executing find query", {
+      tableName,
+      query: query.substring(0, 150),
+      paramCount: params.length,
+    });
 
-    logger.trace("Found records", { tableName, count: result.length });
+    const result = await this.executeRaw(query, params);
+
+    logger.trace("Found records", { tableName, count: result.rows?.length || 0 });
 
     return result.rows || [];
   }
@@ -331,7 +307,7 @@ export abstract class BaseAdapter implements IAdapter {
   }
 
   /**
-   * ✅ UPDATE - Với sanitization
+   * ✅ UPDATE
    */
   async update(
     tableName: string,
@@ -340,15 +316,17 @@ export abstract class BaseAdapter implements IAdapter {
   ): Promise<number> {
     logger.debug("Updating records", {
       tableName,
-      keys: Object.keys(data),
+      dataKeys: Object.keys(data),
       filter,
     });
 
     this.ensureConnected();
     const keys = Object.keys(data);
 
+    // ✅ Sanitize values
     const values = keys.map((key) => this.sanitizeValue(data[key]));
 
+    // ✅ Build SET clause with placeholders
     const setClauses = keys
       .map(
         (key, i) =>
@@ -359,11 +337,13 @@ export abstract class BaseAdapter implements IAdapter {
       )
       .join(", ");
 
+    // ✅ Build WHERE clause (placeholders start after SET values)
     const { clause, params: whereParams } = QueryHelper.buildWhereClause(
       filter,
       this.type,
       keys.length + 1
     );
+    
     const allParams = [...values, ...whereParams];
 
     let query = `UPDATE ${QueryHelper.quoteIdentifier(
@@ -373,8 +353,16 @@ export abstract class BaseAdapter implements IAdapter {
 
     if (clause !== "1=1") query += ` WHERE ${clause}`;
 
-    const result = await this.raw(query, allParams);
-    const affected = result.rowsAffected || 0;
+    logger.trace("Executing update query", {
+      tableName,
+      query: query.substring(0, 150),
+      paramCount: allParams.length,
+    });
+
+    const result = await this.executeRaw(query, allParams);
+    
+    // ✅ Handle different result formats
+    const affected = result.rowCount || result.rowsAffected || result.changes || 0;
 
     if (affected === 0) {
       logger.warn("No records updated", { tableName });
@@ -398,12 +386,15 @@ export abstract class BaseAdapter implements IAdapter {
     logger.debug("Updating record by ID", {
       tableName,
       id,
-      keys: Object.keys(data),
+      dataKeys: Object.keys(data),
     });
 
     return this.updateOne(tableName, { id } as QueryFilter, data);
   }
 
+  /**
+   * ✅ DELETE
+   */
   async delete(tableName: string, filter: QueryFilter): Promise<number> {
     logger.debug("Deleting records", { tableName, filter });
 
@@ -417,8 +408,16 @@ export abstract class BaseAdapter implements IAdapter {
 
     if (clause !== "1=1") query += ` WHERE ${clause}`;
 
-    const result = await this.raw(query, params);
-    const affected = result.rowsAffected || 0;
+    logger.trace("Executing delete query", {
+      tableName,
+      query,
+      paramCount: params.length,
+    });
+
+    const result = await this.executeRaw(query, params);
+    
+    // ✅ Handle different result formats
+    const affected = result.rowCount || result.rowsAffected || result.changes || 0;
 
     if (affected === 0) {
       logger.warn("No records deleted", { tableName });
@@ -456,7 +455,7 @@ export abstract class BaseAdapter implements IAdapter {
 
     if (clause !== "1=1") query += ` WHERE ${clause}`;
 
-    const result = await this.raw(query, params);
+    const result = await this.executeRaw(query, params);
     const countValue = parseInt(result.rows?.[0]?.count || "0");
 
     logger.trace("Counted records", { tableName, count: countValue });
@@ -470,6 +469,7 @@ export abstract class BaseAdapter implements IAdapter {
         typeof query === "string"
           ? query.substring(0, 200) + (query.length > 200 ? "..." : "")
           : "Non-string query",
+      paramCount: params?.length || 0,
     });
 
     this.ensureConnected();
@@ -485,19 +485,19 @@ export abstract class BaseAdapter implements IAdapter {
     logger.info("Beginning transaction", { type: this.type });
 
     this.ensureConnected();
-    await this.raw("BEGIN");
+    await this.executeRaw("BEGIN", []);
     let active = true;
 
     return {
       commit: async () => {
         if (!active) throw new Error("Transaction already completed");
-        await this.raw("COMMIT");
+        await this.executeRaw("COMMIT", []);
         active = false;
         logger.info("Transaction committed", { type: this.type });
       },
       rollback: async () => {
         if (!active) throw new Error("Transaction already completed");
-        await this.raw("ROLLBACK");
+        await this.executeRaw("ROLLBACK", []);
         active = false;
         logger.info("Transaction rolled back", { type: this.type });
       },
@@ -509,9 +509,6 @@ export abstract class BaseAdapter implements IAdapter {
   // 🛠️ UTILITY METHODS
   // ==========================================
 
-  /**
-   * 🏗️ Build column definition với proper type mapping
-   */
   protected buildColumnDefinition(
     fieldName: string,
     fieldDef: FieldDefinition
@@ -519,10 +516,7 @@ export abstract class BaseAdapter implements IAdapter {
     logger.trace("Building column definition", { fieldName, fieldDef });
 
     const quotedName = QueryHelper.quoteIdentifier(fieldName, this.type);
-
-    // 🗺️ Use abstract method for type mapping
     let sqlType = this.mapFieldTypeToDBType(fieldDef.type, fieldDef.length);
-
     let columnDef = `${quotedName} ${sqlType}`;
 
     if (fieldDef.primaryKey) columnDef += " PRIMARY KEY";
@@ -619,7 +613,7 @@ export abstract class BaseAdapter implements IAdapter {
     logger.debug("Performing upsert", {
       tableName,
       filter,
-      keys: Object.keys(data),
+      dataKeys: Object.keys(data),
     });
 
     const existing = await this.findOne(tableName, filter);
@@ -668,7 +662,7 @@ export abstract class BaseAdapter implements IAdapter {
       query += ` WHERE ${clause}`;
     }
 
-    const result = await this.raw(query, params);
+    const result = await this.executeRaw(query, params);
     const distinctValues = result.rows?.map((row: any) => row[field]) || [];
 
     logger.trace("Distinct values retrieved", {
@@ -695,7 +689,7 @@ export abstract class BaseAdapter implements IAdapter {
     const result = await this.executeRaw(query, params);
     return {
       rows: result.rows || [],
-      rowsAffected: result.rowsAffected || result.changes || 0,
+      rowsAffected: result.rowsAffected || result.rowCount || result.changes || 0,
       lastInsertId: result.lastInsertId || result.insertId,
       metadata: result,
     };

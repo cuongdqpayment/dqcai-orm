@@ -92,6 +92,11 @@ export interface IAdapter<TConnection extends IConnection = IConnection> {
   ): Promise<IResult>;
   raw(query: string | any, params?: any[]): Promise<any>;
 
+  // Required methods from IAdapter
+  executeRaw(query: string | any, params?: any[]): Promise<any>;
+  tableExists(tableName: string): Promise<boolean>;
+  getTableInfo(tableName: string): Promise<EntitySchemaDefinition | null>;
+
   // Transaction Management
   beginTransaction(): Promise<Transaction>;
 
