@@ -14,6 +14,26 @@ export class MySQLAdapter extends BaseAdapter {
   databaseType: DatabaseType = "mysql";
   private pool: any = null;
 
+  // chuyển các hàm của hỗ trợ sang adapter để được sử dụng khi gọi thay vì gọi trong connection
+  isSupported(): boolean {
+    // Nếu đã connect → supported
+    if (this.pool || this.isConnected()) {
+      return true;
+    }
+
+    logger.trace("Checking MySQL support");
+
+    try {
+      require.resolve("mysql2");
+      logger.debug("MySQL module 'mysql2' is supported");
+
+      return true;
+    } catch {
+      logger.debug("MySQL module 'mysql2' is not supported");
+
+      return false;
+    }
+  }
   // ==========================================
   // REQUIRED ABSTRACT METHOD IMPLEMENTATIONS
   // ==========================================
@@ -35,7 +55,7 @@ export class MySQLAdapter extends BaseAdapter {
 
     // Handle Date objects → MySQL datetime format
     if (value instanceof Date) {
-      const formattedDate = value.toISOString().slice(0, 19).replace('T', ' ');
+      const formattedDate = value.toISOString().slice(0, 19).replace("T", " ");
       logger.trace("Converted Date to MySQL datetime format");
       return formattedDate;
     }
@@ -43,14 +63,19 @@ export class MySQLAdapter extends BaseAdapter {
     // Handle boolean → 1/0
     if (typeof value === "boolean") {
       const numericValue = value ? 1 : 0;
-      logger.trace("Converted Boolean to numeric", { original: value, converted: numericValue });
+      logger.trace("Converted Boolean to numeric", {
+        original: value,
+        converted: numericValue,
+      });
       return numericValue;
     }
 
     // Handle arrays/objects → JSON stringify
     if (typeof value === "object" && !Buffer.isBuffer(value)) {
       const jsonString = JSON.stringify(value);
-      logger.trace("Converted object/array to JSON string", { length: jsonString.length });
+      logger.trace("Converted object/array to JSON string", {
+        length: jsonString.length,
+      });
       return jsonString;
     }
 
@@ -126,9 +151,9 @@ export class MySQLAdapter extends BaseAdapter {
     data: any,
     primaryKeys?: string[]
   ): Promise<any> {
-    logger.debug("Processing insert result", { 
-      tableName, 
-      hasInsertId: !!result.insertId 
+    logger.debug("Processing insert result", {
+      tableName,
+      hasInsertId: !!result.insertId,
     });
 
     // MySQL trả về insertId
@@ -146,15 +171,21 @@ export class MySQLAdapter extends BaseAdapter {
       this.type
     )} WHERE ${QueryHelper.quoteIdentifier(pkField, this.type)} = ?`;
 
-    logger.trace("Executing select query for inserted record", { pkField, lastInsertId });
+    logger.trace("Executing select query for inserted record", {
+      pkField,
+      lastInsertId,
+    });
 
     const selectResult = await this.executeRaw(query, [lastInsertId]);
-    const insertedRecord = selectResult.rows?.[0] || { ...data, [pkField]: lastInsertId };
+    const insertedRecord = selectResult.rows?.[0] || {
+      ...data,
+      [pkField]: lastInsertId,
+    };
 
-    logger.trace("Insert result processed", { 
-      tableName, 
-      pkField, 
-      lastInsertId 
+    logger.trace("Insert result processed", {
+      tableName,
+      pkField,
+      lastInsertId,
     });
 
     return insertedRecord;
@@ -173,9 +204,11 @@ export class MySQLAdapter extends BaseAdapter {
   // ==========================================
 
   async executeRaw(query: string, params?: any[]): Promise<any> {
-    logger.trace("Executing raw MySQL query", { 
-      querySnippet: query.substring(0, Math.min(100, query.length)) + (query.length > 100 ? '...' : ''), 
-      paramsCount: params?.length || 0 
+    logger.trace("Executing raw MySQL query", {
+      querySnippet:
+        query.substring(0, Math.min(100, query.length)) +
+        (query.length > 100 ? "..." : ""),
+      paramsCount: params?.length || 0,
     });
 
     if (!this.pool) {
@@ -202,9 +235,9 @@ export class MySQLAdapter extends BaseAdapter {
         rowsAffected: (rows as any).affectedRows || 0,
         insertId: (rows as any).insertId,
       };
-      logger.trace("Non-SELECT query executed", { 
-        affectedRows: result.rowsAffected, 
-        insertId: result.insertId 
+      logger.trace("Non-SELECT query executed", {
+        affectedRows: result.rowsAffected,
+        insertId: result.insertId,
       });
       return result;
     }
@@ -255,9 +288,9 @@ export class MySQLAdapter extends BaseAdapter {
 
     const tableInfo = { name: tableName, cols };
 
-    logger.debug("Table info retrieved", { 
-      tableName, 
-      columnCount: cols.length 
+    logger.debug("Table info retrieved", {
+      tableName,
+      columnCount: cols.length,
     });
 
     return tableInfo;
@@ -271,9 +304,9 @@ export class MySQLAdapter extends BaseAdapter {
    * 🔄 OVERRIDE: MySQL không hỗ trợ RETURNING
    */
   async insertOne(tableName: string, data: any): Promise<any> {
-    logger.debug("Inserting one record", { 
-      tableName, 
-      dataKeys: Object.keys(data) 
+    logger.debug("Inserting one record", {
+      tableName,
+      dataKeys: Object.keys(data),
     });
 
     this.ensureConnected();
@@ -292,20 +325,25 @@ export class MySQLAdapter extends BaseAdapter {
       this.type
     )} (${quotedKeys}) VALUES (${placeholders})`;
 
-    logger.trace("Executing insert query", { 
-      tableName, 
+    logger.trace("Executing insert query", {
+      tableName,
       keyCount: keys.length,
-      placeholderCount: placeholders.split(',').length 
+      placeholderCount: placeholders.split(",").length,
     });
 
     const result = await this.executeRaw(query, values);
 
     // ✅ Process result (query lại)
-    const insertedRecord = await this.processInsertResult(tableName, result, data, ["id"]);
+    const insertedRecord = await this.processInsertResult(
+      tableName,
+      result,
+      data,
+      ["id"]
+    );
 
-    logger.info("Inserted one record successfully", { 
-      tableName, 
-      insertedId: insertedRecord.id 
+    logger.info("Inserted one record successfully", {
+      tableName,
+      insertedId: insertedRecord.id,
     });
 
     return insertedRecord;

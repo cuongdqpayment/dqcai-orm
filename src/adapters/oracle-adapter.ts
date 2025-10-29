@@ -19,6 +19,26 @@ export class OracleAdapter extends BaseAdapter {
   private oracledb: any = null;
   private pool: any = null;
 
+  // chuyển các hàm của hỗ trợ sang adapter để được sử dụng khi gọi thay vì gọi trong connection
+  isSupported(): boolean {
+    // Nếu đã connect → supported
+    if (this.pool || this.isConnected()) {
+      return true;
+    }
+
+    logger.trace("Checking Oracle support");
+
+    try {
+      require.resolve("oracledb");
+      logger.debug("Oracle module 'oracledb' is supported");
+
+      return true;
+    } catch {
+      logger.debug("Oracle module 'oracledb' is not supported");
+
+      return false;
+    }
+  }
   // ==========================================
   // REQUIRED ABSTRACT METHOD IMPLEMENTATIONS
   // ==========================================
@@ -48,14 +68,19 @@ export class OracleAdapter extends BaseAdapter {
     // Handle boolean → 1/0
     if (typeof value === "boolean") {
       const numericValue = value ? 1 : 0;
-      logger.trace("Converted Boolean to numeric", { original: value, converted: numericValue });
+      logger.trace("Converted Boolean to numeric", {
+        original: value,
+        converted: numericValue,
+      });
       return numericValue;
     }
 
     // Handle arrays/objects → JSON stringify (CLOB)
     if (typeof value === "object" && !Buffer.isBuffer(value)) {
       const jsonString = JSON.stringify(value);
-      logger.trace("Converted object/array to JSON string", { length: jsonString.length });
+      logger.trace("Converted object/array to JSON string", {
+        length: jsonString.length,
+      });
       return jsonString;
     }
 
@@ -131,9 +156,9 @@ export class OracleAdapter extends BaseAdapter {
     data: any,
     primaryKeys?: string[]
   ): Promise<any> {
-    logger.debug("Processing insert result", { 
-      tableName, 
-      hasLastRowid: !!result.lastRowid || !!result.lastInsertId 
+    logger.debug("Processing insert result", {
+      tableName,
+      hasLastRowid: !!result.lastRowid || !!result.lastInsertId,
     });
 
     // Oracle trả về lastRowid
@@ -151,15 +176,21 @@ export class OracleAdapter extends BaseAdapter {
       this.type
     )} WHERE ${QueryHelper.quoteIdentifier(pkField, this.type)} = :1`;
 
-    logger.trace("Executing select query for inserted record", { pkField, lastRowid });
+    logger.trace("Executing select query for inserted record", {
+      pkField,
+      lastRowid,
+    });
 
     const selectResult = await this.executeRaw(query, [lastRowid]);
-    const insertedRecord = selectResult.rows?.[0] || { ...data, [pkField]: lastRowid };
+    const insertedRecord = selectResult.rows?.[0] || {
+      ...data,
+      [pkField]: lastRowid,
+    };
 
-    logger.trace("Insert result processed", { 
-      tableName, 
-      pkField, 
-      lastRowid 
+    logger.trace("Insert result processed", {
+      tableName,
+      pkField,
+      lastRowid,
     });
 
     return insertedRecord;
@@ -178,9 +209,11 @@ export class OracleAdapter extends BaseAdapter {
   // ==========================================
 
   async executeRaw(query: string, params?: any[]): Promise<any> {
-    logger.trace("Executing raw Oracle query", { 
-      querySnippet: query.substring(0, Math.min(100, query.length)) + (query.length > 100 ? '...' : ''), 
-      paramsCount: params?.length || 0 
+    logger.trace("Executing raw Oracle query", {
+      querySnippet:
+        query.substring(0, Math.min(100, query.length)) +
+        (query.length > 100 ? "..." : ""),
+      paramsCount: params?.length || 0,
     });
 
     if (!this.pool) {
@@ -203,12 +236,17 @@ export class OracleAdapter extends BaseAdapter {
         lastRowid: result.lastRowid,
         metadata: result.metaData,
       };
-      logger.trace("Raw query executed", { rowCount: formattedResult.rows.length, rowsAffected: formattedResult.rowsAffected });
+      logger.trace("Raw query executed", {
+        rowCount: formattedResult.rows.length,
+        rowsAffected: formattedResult.rowsAffected,
+      });
       return formattedResult;
     } catch (error) {
-      logger.error("Oracle query execution failed", { 
-        querySnippet: query.substring(0, Math.min(100, query.length)) + (query.length > 100 ? '...' : ''), 
-        error: (error as Error).message 
+      logger.error("Oracle query execution failed", {
+        querySnippet:
+          query.substring(0, Math.min(100, query.length)) +
+          (query.length > 100 ? "..." : ""),
+        error: (error as Error).message,
       });
       throw new Error(`Oracle query execution failed: ${error}`);
     } finally {
@@ -217,7 +255,9 @@ export class OracleAdapter extends BaseAdapter {
           await conn.close();
           logger.trace("Connection returned to pool");
         } catch (err) {
-          logger.error("Error closing Oracle connection", { error: (err as Error).message });
+          logger.error("Error closing Oracle connection", {
+            error: (err as Error).message,
+          });
         }
       }
     }
@@ -264,9 +304,9 @@ export class OracleAdapter extends BaseAdapter {
 
     const tableInfo = { name: tableName, cols };
 
-    logger.debug("Table info retrieved", { 
-      tableName, 
-      columnCount: cols.length 
+    logger.debug("Table info retrieved", {
+      tableName,
+      columnCount: cols.length,
     });
 
     return tableInfo;
@@ -280,9 +320,9 @@ export class OracleAdapter extends BaseAdapter {
     tableName: string,
     schema: SchemaDefinition
   ): Promise<void> {
-    logger.debug("Creating table", { 
-      tableName, 
-      schemaKeys: Object.keys(schema) 
+    logger.debug("Creating table", {
+      tableName,
+      schemaKeys: Object.keys(schema),
     });
 
     this.ensureConnected();
@@ -334,9 +374,9 @@ export class OracleAdapter extends BaseAdapter {
     try {
       await this.raw(dropTableQuery);
     } catch (error) {
-      logger.warn("Table might not exist, skipping drop", { 
-        tableName, 
-        error: (error as Error).message 
+      logger.warn("Table might not exist, skipping drop", {
+        tableName,
+        error: (error as Error).message,
       });
     }
 
@@ -349,9 +389,9 @@ export class OracleAdapter extends BaseAdapter {
         await this.raw(`DROP SEQUENCE ${seq.SEQUENCE_NAME}`);
       }
     } catch (error) {
-      logger.warn("Sequences might not exist, skipping drop", { 
-        tableName, 
-        error: (error as Error).message 
+      logger.warn("Sequences might not exist, skipping drop", {
+        tableName,
+        error: (error as Error).message,
       });
     }
 
@@ -366,9 +406,9 @@ export class OracleAdapter extends BaseAdapter {
    * 🔄 OVERRIDE: Oracle cần xử lý sequence
    */
   async insertOne(tableName: string, data: any): Promise<any> {
-    logger.debug("Inserting one record", { 
-      tableName, 
-      dataKeys: Object.keys(data) 
+    logger.debug("Inserting one record", {
+      tableName,
+      dataKeys: Object.keys(data),
     });
 
     this.ensureConnected();
@@ -387,10 +427,10 @@ export class OracleAdapter extends BaseAdapter {
       this.type
     )} (${quotedKeys}) VALUES (${placeholders})`;
 
-    logger.trace("Executing insert query", { 
-      tableName, 
+    logger.trace("Executing insert query", {
+      tableName,
       keyCount: keys.length,
-      placeholderCount: placeholders.split(',').length 
+      placeholderCount: placeholders.split(",").length,
     });
 
     const result = await this.executeRaw(query, values);
@@ -406,9 +446,9 @@ export class OracleAdapter extends BaseAdapter {
     const selectResult = await this.raw(selectQuery);
     const insertedRecord = selectResult.rows?.[0] || data;
 
-    logger.info("Inserted one record successfully", { 
-      tableName, 
-      insertedId: insertedRecord.id 
+    logger.info("Inserted one record successfully", {
+      tableName,
+      insertedId: insertedRecord.id,
     });
 
     return insertedRecord;
@@ -422,7 +462,10 @@ export class OracleAdapter extends BaseAdapter {
     fieldName: string,
     fieldDef: FieldDefinition
   ): string {
-    logger.trace("Building Oracle column definition", { fieldName, fieldDefType: fieldDef.type });
+    logger.trace("Building Oracle column definition", {
+      fieldName,
+      fieldDefType: fieldDef.type,
+    });
 
     const quotedName = QueryHelper.quoteIdentifier(fieldName, this.type);
     let oracleType = this.mapFieldTypeToDBType(fieldDef.type, fieldDef.length);
@@ -450,10 +493,16 @@ export class OracleAdapter extends BaseAdapter {
     }
 
     if (fieldDef.default !== undefined && !fieldDef.autoIncrement) {
-      columnDef += ` DEFAULT ${this.formatOracleDefaultValue(fieldDef.default)}`;
+      columnDef += ` DEFAULT ${this.formatOracleDefaultValue(
+        fieldDef.default
+      )}`;
     }
 
-    logger.trace("Oracle column definition built", { fieldName, columnDefSnippet: columnDef.substring(0, 50) + (columnDef.length > 50 ? '...' : '') });
+    logger.trace("Oracle column definition built", {
+      fieldName,
+      columnDefSnippet:
+        columnDef.substring(0, 50) + (columnDef.length > 50 ? "..." : ""),
+    });
 
     return columnDef;
   }
@@ -463,7 +512,11 @@ export class OracleAdapter extends BaseAdapter {
     columnName: string,
     sequenceName: string
   ): Promise<void> {
-    logger.trace("Creating auto-increment sequence", { tableName, columnName, sequenceName });
+    logger.trace("Creating auto-increment sequence", {
+      tableName,
+      columnName,
+      sequenceName,
+    });
 
     const createSeqQuery = `CREATE SEQUENCE ${sequenceName} START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE`;
     await this.raw(createSeqQuery);
@@ -487,7 +540,10 @@ export class OracleAdapter extends BaseAdapter {
     `;
     await this.raw(createTriggerQuery);
 
-    logger.trace("Auto-increment sequence and trigger created", { sequenceName, triggerName });
+    logger.trace("Auto-increment sequence and trigger created", {
+      sequenceName,
+      triggerName,
+    });
   }
 
   private mapOracleTypeToFieldType(oracleType: string): string {
@@ -512,7 +568,9 @@ export class OracleAdapter extends BaseAdapter {
   }
 
   private convertParamsToBinds(params?: any[]): any {
-    logger.trace("Converting params to Oracle binds", { paramsCount: params?.length || 0 });
+    logger.trace("Converting params to Oracle binds", {
+      paramsCount: params?.length || 0,
+    });
 
     if (!params || params.length === 0) {
       logger.trace("No params to convert, returning empty object");
@@ -522,13 +580,17 @@ export class OracleAdapter extends BaseAdapter {
     params.forEach((param, index) => {
       binds[index + 1] = param;
     });
-    logger.trace("Params converted to binds", { bindCount: Object.keys(binds).length });
+    logger.trace("Params converted to binds", {
+      bindCount: Object.keys(binds).length,
+    });
 
     return binds;
   }
 
   private formatOracleDefaultValue(value: any): string {
-    logger.trace("Formatting Oracle default value", { valueType: typeof value });
+    logger.trace("Formatting Oracle default value", {
+      valueType: typeof value,
+    });
 
     if (value === null) {
       logger.trace("Default value is null");

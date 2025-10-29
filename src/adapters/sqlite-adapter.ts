@@ -13,6 +13,29 @@ export class SQLiteAdapter extends BaseAdapter {
   databaseType: DatabaseType = "sqlite";
   private db: any = null;
 
+
+  // chuyển các hàm của hỗ trợ sang adapter để được sử dụng khi gọi thay vì gọi trong connection
+  isSupported(): boolean {
+    // Nếu đã connect → supported
+    if (this.db || this.isConnected()) {
+      return true;
+    }
+
+    // Check better-sqlite3
+    try {
+      require.resolve("better-sqlite3");
+      return true;
+    } catch {
+      // Check sqlite3 (fallback)
+      try {
+        require.resolve("sqlite3");
+        return true;
+      } catch {
+        return false;
+      }
+    }
+  }
+
   // ==========================================
   // REQUIRED ABSTRACT METHOD IMPLEMENTATIONS
   // ==========================================

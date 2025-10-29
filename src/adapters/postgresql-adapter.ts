@@ -13,6 +13,26 @@ export class PostgreSQLAdapter extends BaseAdapter {
   databaseType: DatabaseType = "postgresql";
   private pool: any = null;
 
+  // chuyển các hàm của hỗ trợ sang adapter để được sử dụng khi gọi thay vì gọi trong connection
+  isSupported(): boolean {
+    // Nếu đã connect → supported
+    if (this.pool || this.isConnected()) {
+      return true;
+    }
+
+    logger.trace("Checking PostgreSQL support");
+
+    try {
+      require.resolve("pg");
+      logger.debug("PostgreSQL module 'pg' is supported");
+
+      return true;
+    } catch {
+      logger.debug("PostgreSQL module 'pg' is not supported");
+
+      return false;
+    }
+  }
   // ==========================================
   // REQUIRED ABSTRACT METHOD IMPLEMENTATIONS
   // ==========================================
@@ -48,7 +68,9 @@ export class PostgreSQLAdapter extends BaseAdapter {
     // Arrays/Objects → JSON
     if (typeof value === "object" && !Buffer.isBuffer(value)) {
       const jsonString = JSON.stringify(value);
-      logger.trace("Converted object/array to JSON string", { length: jsonString.length });
+      logger.trace("Converted object/array to JSON string", {
+        length: jsonString.length,
+      });
       return jsonString;
     }
 
@@ -124,12 +146,18 @@ export class PostgreSQLAdapter extends BaseAdapter {
     data: any,
     primaryKeys?: string[]
   ): Promise<any> {
-    logger.trace("Processing insert result", { tableName, hasRows: !!result.rows?.length });
+    logger.trace("Processing insert result", {
+      tableName,
+      hasRows: !!result.rows?.length,
+    });
 
     // PostgreSQL trả về row trực tiếp qua RETURNING *
     const processedResult = result.rows?.[0] || data;
 
-    logger.trace("Insert result processed", { tableName, resultKeys: Object.keys(processedResult) });
+    logger.trace("Insert result processed", {
+      tableName,
+      resultKeys: Object.keys(processedResult),
+    });
 
     return processedResult;
   }
@@ -147,9 +175,11 @@ export class PostgreSQLAdapter extends BaseAdapter {
   // ==========================================
 
   async executeRaw(query: string, params?: any[]): Promise<any> {
-    logger.trace("Executing raw PostgreSQL query", { 
-      querySnippet: query.substring(0, Math.min(100, query.length)) + (query.length > 100 ? '...' : ''), 
-      paramsCount: params?.length || 0 
+    logger.trace("Executing raw PostgreSQL query", {
+      querySnippet:
+        query.substring(0, Math.min(100, query.length)) +
+        (query.length > 100 ? "..." : ""),
+      paramsCount: params?.length || 0,
     });
 
     if (!this.pool) {
@@ -157,7 +187,10 @@ export class PostgreSQLAdapter extends BaseAdapter {
       throw new Error("Not connected to PostgreSQL");
     }
     const result = await this.pool.query(query, params);
-    logger.trace("Raw query executed", { rowCount: result.rowCount, command: result.command });
+    logger.trace("Raw query executed", {
+      rowCount: result.rowCount,
+      command: result.command,
+    });
 
     return result;
   }
@@ -200,9 +233,9 @@ export class PostgreSQLAdapter extends BaseAdapter {
 
     const tableInfo = { name: tableName, cols };
 
-    logger.debug("Table info retrieved", { 
-      tableName, 
-      columnCount: cols.length 
+    logger.debug("Table info retrieved", {
+      tableName,
+      columnCount: cols.length,
     });
 
     return tableInfo;
@@ -216,9 +249,9 @@ export class PostgreSQLAdapter extends BaseAdapter {
    * 🔄 OVERRIDE: PostgreSQL hỗ trợ RETURNING *
    */
   async insertOne(tableName: string, data: any): Promise<any> {
-    logger.debug("Inserting one record", { 
-      tableName, 
-      dataKeys: Object.keys(data) 
+    logger.debug("Inserting one record", {
+      tableName,
+      dataKeys: Object.keys(data),
     });
 
     this.ensureConnected();
@@ -238,20 +271,25 @@ export class PostgreSQLAdapter extends BaseAdapter {
       this.type
     )} (${quotedKeys}) VALUES (${placeholders}) RETURNING *`;
 
-    logger.trace("Executing insert query", { 
-      tableName, 
+    logger.trace("Executing insert query", {
+      tableName,
       keyCount: keys.length,
-      placeholderCount: placeholders.split(',').length 
+      placeholderCount: placeholders.split(",").length,
     });
 
     const result = await this.executeRaw(query, values);
 
     // ✅ Process result
-    const insertedRecord = await this.processInsertResult(tableName, result, data, ["id"]);
+    const insertedRecord = await this.processInsertResult(
+      tableName,
+      result,
+      data,
+      ["id"]
+    );
 
-    logger.info("Inserted one record successfully", { 
-      tableName, 
-      insertedId: insertedRecord.id 
+    logger.info("Inserted one record successfully", {
+      tableName,
+      insertedId: insertedRecord.id,
     });
 
     return insertedRecord;

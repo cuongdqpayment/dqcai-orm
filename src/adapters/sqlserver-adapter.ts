@@ -12,7 +12,27 @@ export class SQLServerAdapter extends BaseAdapter {
   type: DatabaseType = "sqlserver";
   databaseType: DatabaseType = "sqlserver";
   private pool: any = null;
+  
+  // chuyển các hàm của hỗ trợ sang adapter để được sử dụng khi gọi thay vì gọi trong connection
+  isSupported(): boolean {
+    // Nếu đã connect → supported
+    if (this.pool || this.isConnected()) {
+      return true;
+    }
 
+    logger.trace("Checking SQL Server support");
+
+    try {
+      require.resolve("mssql");
+      logger.debug("SQL Server module 'mssql' is supported");
+
+      return true;
+    } catch {
+      logger.debug("SQL Server module 'mssql' is not supported");
+
+      return false;
+    }
+  }
   // ==========================================
   // REQUIRED ABSTRACT METHOD IMPLEMENTATIONS
   // ==========================================
@@ -34,7 +54,7 @@ export class SQLServerAdapter extends BaseAdapter {
 
     // Handle Date objects → SQL Server datetime format
     if (value instanceof Date) {
-      const formattedDate = value.toISOString().slice(0, 23).replace('T', ' ');
+      const formattedDate = value.toISOString().slice(0, 23).replace("T", " ");
       logger.trace("Converted Date to SQL Server datetime format");
       return formattedDate;
     }
@@ -42,14 +62,19 @@ export class SQLServerAdapter extends BaseAdapter {
     // Handle boolean → 1/0
     if (typeof value === "boolean") {
       const numericValue = value ? 1 : 0;
-      logger.trace("Converted Boolean to numeric", { original: value, converted: numericValue });
+      logger.trace("Converted Boolean to numeric", {
+        original: value,
+        converted: numericValue,
+      });
       return numericValue;
     }
 
     // Handle arrays/objects → JSON stringify
     if (typeof value === "object" && !Buffer.isBuffer(value)) {
       const jsonString = JSON.stringify(value);
-      logger.trace("Converted object/array to JSON string", { length: jsonString.length });
+      logger.trace("Converted object/array to JSON string", {
+        length: jsonString.length,
+      });
       return jsonString;
     }
 
@@ -125,9 +150,9 @@ export class SQLServerAdapter extends BaseAdapter {
     data: any,
     primaryKeys?: string[]
   ): Promise<any> {
-    logger.debug("Processing insert result", { 
-      tableName, 
-      hasRows: !!result.rows?.length 
+    logger.debug("Processing insert result", {
+      tableName,
+      hasRows: !!result.rows?.length,
     });
 
     // Nếu có OUTPUT INSERTED.*, result sẽ chứa row
@@ -139,7 +164,7 @@ export class SQLServerAdapter extends BaseAdapter {
 
     // Fallback: Query lại bằng SCOPE_IDENTITY()
     const pkField = primaryKeys?.[0] || "id";
-    
+
     // Lấy SCOPE_IDENTITY() (last inserted ID)
     const identityQuery = `SELECT SCOPE_IDENTITY() AS id`;
     logger.trace("Executing SCOPE_IDENTITY query");
@@ -147,7 +172,9 @@ export class SQLServerAdapter extends BaseAdapter {
     const lastInsertId = identityResult.rows[0]?.id;
 
     if (!lastInsertId) {
-      logger.warn("No insert ID available, returning original data", { tableName });
+      logger.warn("No insert ID available, returning original data", {
+        tableName,
+      });
       return data;
     }
 
@@ -157,15 +184,21 @@ export class SQLServerAdapter extends BaseAdapter {
       this.type
     )} WHERE ${QueryHelper.quoteIdentifier(pkField, this.type)} = @p1`;
 
-    logger.trace("Executing select query for inserted record", { pkField, lastInsertId });
+    logger.trace("Executing select query for inserted record", {
+      pkField,
+      lastInsertId,
+    });
 
     const selectResult = await this.executeRaw(query, [lastInsertId]);
-    const insertedRecord = selectResult.rows?.[0] || { ...data, [pkField]: lastInsertId };
+    const insertedRecord = selectResult.rows?.[0] || {
+      ...data,
+      [pkField]: lastInsertId,
+    };
 
-    logger.trace("Insert result processed via fallback query", { 
-      tableName, 
-      pkField, 
-      lastInsertId 
+    logger.trace("Insert result processed via fallback query", {
+      tableName,
+      pkField,
+      lastInsertId,
     });
 
     return insertedRecord;
@@ -184,35 +217,40 @@ export class SQLServerAdapter extends BaseAdapter {
   // ==========================================
 
   async executeRaw(query: string, params?: any[]): Promise<any> {
-    logger.trace("Executing raw SQL Server query", { 
-      querySnippet: query.substring(0, Math.min(100, query.length)) + (query.length > 100 ? '...' : ''), 
-      paramsCount: params?.length || 0 
+    logger.trace("Executing raw SQL Server query", {
+      querySnippet:
+        query.substring(0, Math.min(100, query.length)) +
+        (query.length > 100 ? "..." : ""),
+      paramsCount: params?.length || 0,
     });
 
     if (!this.pool) {
       logger.error("Not connected to SQL Server");
       throw new Error("Not connected to SQL Server");
     }
-    
+
     const request = this.pool.request();
-    
+
     // Bind parameters
     params?.forEach((param, index) => {
-      logger.trace("Binding parameter", { index: index + 1, paramType: typeof param });
+      logger.trace("Binding parameter", {
+        index: index + 1,
+        paramType: typeof param,
+      });
       request.input(`p${index + 1}`, param);
     });
-    
+
     const result = await request.query(query);
-    
+
     const formattedResult = {
       rows: result.recordset || [],
       rowCount: result.rowsAffected?.[0] || 0,
       rowsAffected: result.rowsAffected?.[0] || 0,
     };
 
-    logger.trace("Raw query executed", { 
-      rowCount: formattedResult.rows.length, 
-      rowsAffected: formattedResult.rowsAffected 
+    logger.trace("Raw query executed", {
+      rowCount: formattedResult.rows.length,
+      rowsAffected: formattedResult.rowsAffected,
     });
 
     return formattedResult;
@@ -230,7 +268,9 @@ export class SQLServerAdapter extends BaseAdapter {
     return exists;
   }
 
-  async getTableInfo(tableName: string): Promise<EntitySchemaDefinition | null> {
+  async getTableInfo(
+    tableName: string
+  ): Promise<EntitySchemaDefinition | null> {
     logger.debug("Getting table info", { tableName });
 
     const query = `
@@ -254,9 +294,9 @@ export class SQLServerAdapter extends BaseAdapter {
 
     const tableInfo = { name: tableName, cols };
 
-    logger.debug("Table info retrieved", { 
-      tableName, 
-      columnCount: cols.length 
+    logger.debug("Table info retrieved", {
+      tableName,
+      columnCount: cols.length,
     });
 
     return tableInfo;
@@ -277,9 +317,9 @@ export class SQLServerAdapter extends BaseAdapter {
    * 🔄 OVERRIDE: SQL Server hỗ trợ OUTPUT INSERTED.*
    */
   async insertOne(tableName: string, data: any): Promise<any> {
-    logger.debug("Inserting one record", { 
-      tableName, 
-      dataKeys: Object.keys(data) 
+    logger.debug("Inserting one record", {
+      tableName,
+      dataKeys: Object.keys(data),
     });
 
     this.ensureConnected();
@@ -299,20 +339,25 @@ export class SQLServerAdapter extends BaseAdapter {
       this.type
     )} (${quotedKeys}) OUTPUT INSERTED.* VALUES (${placeholders})`;
 
-    logger.trace("Executing insert query", { 
-      tableName, 
+    logger.trace("Executing insert query", {
+      tableName,
       keyCount: keys.length,
-      placeholderCount: placeholders.split(',').length 
+      placeholderCount: placeholders.split(",").length,
     });
 
     const result = await this.executeRaw(query, values);
 
     // ✅ Process result
-    const insertedRecord = await this.processInsertResult(tableName, result, data, ["id"]);
+    const insertedRecord = await this.processInsertResult(
+      tableName,
+      result,
+      data,
+      ["id"]
+    );
 
-    logger.info("Inserted one record successfully", { 
-      tableName, 
-      insertedId: insertedRecord.id 
+    logger.info("Inserted one record successfully", {
+      tableName,
+      insertedId: insertedRecord.id,
     });
 
     return insertedRecord;
