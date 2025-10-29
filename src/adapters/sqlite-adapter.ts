@@ -42,14 +42,19 @@ export class SQLiteAdapter extends BaseAdapter {
     // Handle boolean → 1/0
     if (typeof value === "boolean") {
       const numericValue = value ? 1 : 0;
-      logger.trace("Converted Boolean to numeric", { original: value, converted: numericValue });
+      logger.trace("Converted Boolean to numeric", {
+        original: value,
+        converted: numericValue,
+      });
       return numericValue;
     }
 
     // Handle arrays/objects → JSON stringify
     if (typeof value === "object" && !Buffer.isBuffer(value)) {
       const jsonString = JSON.stringify(value);
-      logger.trace("Converted object/array to JSON string", { length: jsonString.length });
+      logger.trace("Converted object/array to JSON string", {
+        length: jsonString.length,
+      });
       return jsonString;
     }
 
@@ -126,9 +131,9 @@ export class SQLiteAdapter extends BaseAdapter {
     data: any,
     primaryKeys?: string[]
   ): Promise<any> {
-    logger.debug("Processing insert result", { 
-      tableName, 
-      hasLastInsertId: !!result.lastInsertId || !!result.lastInsertRowid 
+    logger.debug("Processing insert result", {
+      tableName,
+      hasLastInsertId: !!result.lastInsertId || !!result.lastInsertRowid,
     });
 
     const lastInsertId = result.lastInsertId || result.lastInsertRowid;
@@ -145,15 +150,21 @@ export class SQLiteAdapter extends BaseAdapter {
       this.type
     )} WHERE ${QueryHelper.quoteIdentifier(pkField, this.type)} = ?`;
 
-    logger.trace("Executing select query for inserted record", { pkField, lastInsertId });
+    logger.trace("Executing select query for inserted record", {
+      pkField,
+      lastInsertId,
+    });
 
     const selectResult = await this.executeRaw(query, [lastInsertId]);
-    const insertedRecord = selectResult.rows?.[0] || { ...data, [pkField]: lastInsertId };
+    const insertedRecord = selectResult.rows?.[0] || {
+      ...data,
+      [pkField]: lastInsertId,
+    };
 
-    logger.trace("Insert result processed", { 
-      tableName, 
-      pkField, 
-      lastInsertId 
+    logger.trace("Insert result processed", {
+      tableName,
+      pkField,
+      lastInsertId,
     });
 
     return insertedRecord;
@@ -172,9 +183,11 @@ export class SQLiteAdapter extends BaseAdapter {
   // ==========================================
 
   async executeRaw(query: string, params?: any[]): Promise<any> {
-    logger.trace("Executing raw SQLite query", { 
-      querySnippet: query.substring(0, Math.min(100, query.length)) + (query.length > 100 ? '...' : ''), 
-      paramsCount: params?.length || 0 
+    logger.trace("Executing raw SQLite query", {
+      querySnippet:
+        query.substring(0, Math.min(100, query.length)) +
+        (query.length > 100 ? "..." : ""),
+      paramsCount: params?.length || 0,
     });
 
     if (!this.db) {
@@ -183,9 +196,13 @@ export class SQLiteAdapter extends BaseAdapter {
     }
 
     // Sanitize params trước khi execute
-    const sanitizedParams = params?.map((p) => this.sanitizeValue(p));
+    // const sanitizedParams = params?.map((p) => this.sanitizeValue(p));
+    const hasParams = params && params.length > 0;
+    const sanitizedParams = hasParams
+      ? params.map((p) => this.sanitizeValue(p))
+      : undefined;
 
-    if (query.trim().toUpperCase().startsWith("SELECT")) {
+    /* if (query.trim().toUpperCase().startsWith("SELECT")) {
       logger.trace("Executing SELECT query");
       const rows = this.db.prepare(query).all(sanitizedParams);
       const result = { rows, rowCount: rows.length };
@@ -201,11 +218,46 @@ export class SQLiteAdapter extends BaseAdapter {
         lastInsertId: info.lastInsertRowid,
         lastInsertRowid: info.lastInsertRowid,
       };
-      logger.trace("Non-SELECT query executed", { 
-        changes: info.changes, 
-        lastInsertRowid: info.lastInsertRowid 
+      logger.trace("Non-SELECT query executed", {
+        changes: info.changes,
+        lastInsertRowid: info.lastInsertRowid,
       });
       return result;
+    } */
+
+    try {
+      const isSelect = query.trim().toUpperCase().startsWith("SELECT");
+
+      if (isSelect) {
+        // SELECT query
+        logger.trace("Executing SELECT query");
+        const rows = hasParams
+          ? this.db.prepare(query).all(sanitizedParams)
+          : this.db.prepare(query).all();
+
+        return { rows, rowCount: rows.length };
+      } else {
+        // Non-SELECT query (INSERT, UPDATE, DELETE, CREATE, etc.)
+        logger.trace("Executing non-SELECT query");
+        const info = hasParams
+          ? this.db.prepare(query).run(sanitizedParams)
+          : this.db.prepare(query).run();
+
+        return {
+          rows: [],
+          rowCount: info.changes,
+          rowsAffected: info.changes,
+          lastInsertId: info.lastInsertRowid,
+          lastInsertRowid: info.lastInsertRowid,
+        };
+      }
+    } catch (error) {
+      logger.error("Query execution failed", {
+        query: query.substring(0, 200),
+        hasParams,
+        error: error instanceof Error ? error.message : error,
+      });
+      throw error;
     }
   }
 
@@ -243,9 +295,9 @@ export class SQLiteAdapter extends BaseAdapter {
 
     const tableInfo = { name: tableName, cols };
 
-    logger.debug("Table info retrieved", { 
-      tableName, 
-      columnCount: cols.length 
+    logger.debug("Table info retrieved", {
+      tableName,
+      columnCount: cols.length,
     });
 
     return tableInfo;
@@ -266,9 +318,9 @@ export class SQLiteAdapter extends BaseAdapter {
    * 🔄 OVERRIDE: SQLite cần xử lý đặc biệt cho RETURNING
    */
   async insertOne(tableName: string, data: any): Promise<any> {
-    logger.debug("Inserting one record", { 
-      tableName, 
-      dataKeys: Object.keys(data) 
+    logger.debug("Inserting one record", {
+      tableName,
+      dataKeys: Object.keys(data),
     });
 
     this.ensureConnected();
@@ -288,20 +340,25 @@ export class SQLiteAdapter extends BaseAdapter {
       this.type
     )} (${quotedKeys}) VALUES (${placeholders})`;
 
-    logger.trace("Executing insert query", { 
-      tableName, 
+    logger.trace("Executing insert query", {
+      tableName,
       keyCount: keys.length,
-      placeholderCount: placeholders.split(',').length 
+      placeholderCount: placeholders.split(",").length,
     });
 
     const result = await this.executeRaw(query, values);
 
     // ✅ Process result (query lại)
-    const insertedRecord = await this.processInsertResult(tableName, result, data, ["id"]);
+    const insertedRecord = await this.processInsertResult(
+      tableName,
+      result,
+      data,
+      ["id"]
+    );
 
-    logger.info("Inserted one record successfully", { 
-      tableName, 
-      insertedId: insertedRecord.id 
+    logger.info("Inserted one record successfully", {
+      tableName,
+      insertedId: insertedRecord.id,
     });
 
     return insertedRecord;
