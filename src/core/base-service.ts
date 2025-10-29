@@ -1,5 +1,5 @@
 // ========================
-// src/core/base-service.ts (IMPROVED)
+// src/core/base-service.ts (GUARANTEED ADAPTER SHARING)
 // ========================
 
 import { UniversalDAO } from "./universal-dao";
@@ -10,7 +10,7 @@ import { createModuleLogger, ORMModules } from "../logger";
 const logger = createModuleLogger(ORMModules.BASE_SERVICE);
 
 /**
- * Base Service - IMPROVED với transaction handling tốt hơn
+ * Base Service - ✅ GUARANTEED to use shared adapter from DatabaseManager
  */
 export abstract class BaseService<TModel = any> {
   protected dao: UniversalDAO<any> | null = null;
@@ -29,22 +29,23 @@ export abstract class BaseService<TModel = any> {
     });
   }
 
-  // ==================== INITIALIZATION ====================
+  // ==================== INITIALIZATION (FIXED) ====================
 
   /**
-   * Khởi tạo service với retry logic
+   * ✅ FIXED: Khởi tạo service - Đảm bảo dùng adapter đã register
    */
   public async initialize(retries: number = 3): Promise<void> {
     this.lastAccess = Date.now();
 
-    logger.info("Initializing service", {
+    logger.info("Initializing service with adapter sharing", {
       schemaKey: this.schemaKey,
       entityName: this.entityName,
-      retries
+      retries,
+      hasRegisteredAdapter: !!DatabaseManager.getAdapterInstance(this.schemaKey)
     });
 
     if (this.dao && this.dao.getAdapter().isConnected()) {
-      logger.debug("Service already initialized, skipping", {
+      logger.debug("Service already initialized with connected adapter, skipping", {
         schemaKey: this.schemaKey,
         entityName: this.entityName
       });
@@ -61,12 +62,15 @@ export abstract class BaseService<TModel = any> {
       });
 
       try {
+        // ✅ KEY FIX: Sử dụng DatabaseManager.getDAO() thay vì getOrCreateDAO()
+        // Điều này đảm bảo sử dụng adapter đã được register
         this.dao = await DatabaseManager.getDAO(this.schemaKey);
         this.isOpened = true;
 
-        logger.info("Service initialized successfully", {
+        logger.info("Service initialized successfully with shared adapter", {
           schemaKey: this.schemaKey,
-          entityName: this.entityName
+          entityName: this.entityName,
+          adapterConnected: this.dao.getAdapter().isConnected()
         });
 
         return;
@@ -99,7 +103,7 @@ export abstract class BaseService<TModel = any> {
   }
 
   /**
-   * Đảm bảo service đã được khởi tạo với auto-reconnect
+   * ✅ IMPROVED: Đảm bảo service đã được khởi tạo với auto-reconnect
    */
   protected async ensureInitialized(): Promise<void> {
     if (!this.dao || !this.isOpened) {
@@ -113,10 +117,11 @@ export abstract class BaseService<TModel = any> {
 
     // ✅ Kiểm tra connection còn sống không
     if (!this.dao.getAdapter().isConnected()) {
-      logger.warn("Connection lost for service, reconnecting", {
+      logger.warn("Connection lost for service, reinitializing to get shared adapter", {
         schemaKey: this.schemaKey,
         entityName: this.entityName
       });
+      // Re-initialize để lấy lại DAO với adapter đã register
       await this.initialize();
     }
   }
@@ -283,14 +288,14 @@ export abstract class BaseService<TModel = any> {
     await this.ensureInitialized();
     this.lastAccess = Date.now();
     
-    // ✅ Áp dụng beforeCreate cho từng item
+    // Áp dụng beforeCreate cho từng item
     const processedData = await Promise.all(
       data.map((item) => this.beforeCreate(item))
     );
     
     const results = await this.getDAO().insertMany<TModel>(this.entityName, processedData);
     
-    // ✅ Áp dụng afterCreate cho từng result
+    // Áp dụng afterCreate cho từng result
     const finalResults = await Promise.all(results.map((result) => this.afterCreate(result)));
 
     logger.info("Created many records successfully", {
@@ -461,7 +466,7 @@ export abstract class BaseService<TModel = any> {
   // ==================== TRANSACTION SUPPORT ====================
 
   /**
-   * 🆕 Bắt đầu transaction (low-level)
+   * Bắt đầu transaction (low-level)
    */
   public async beginTransaction(): Promise<Transaction> {
     logger.info("Beginning transaction", {
@@ -475,13 +480,7 @@ export abstract class BaseService<TModel = any> {
   }
 
   /**
-   * 🆕 Thực thi operations trong transaction với auto-commit/rollback
-   * @example
-   * await service.withTransaction(async () => {
-   *   await service.create(data1);
-   *   await service.create(data2);
-   *   // Auto commit nếu không có lỗi
-   * });
+   * Thực thi operations trong transaction với auto-commit/rollback
    */
   public async withTransaction<T>(
     callback: (service: this) => Promise<T>
@@ -518,7 +517,7 @@ export abstract class BaseService<TModel = any> {
   }
 
   /**
-   * 🆕 Batch create với transaction
+   * Batch create với transaction
    */
   public async createBatch(data: Partial<TModel>[]): Promise<TModel[]> {
     logger.debug("Creating batch with transaction", {
@@ -533,7 +532,7 @@ export abstract class BaseService<TModel = any> {
   }
 
   /**
-   * 🆕 Batch update với transaction
+   * Batch update với transaction
    */
   public async updateBatch(
     updates: Array<{ filter: QueryFilter; data: Partial<TModel> }>
@@ -555,7 +554,7 @@ export abstract class BaseService<TModel = any> {
   }
 
   /**
-   * 🆕 Batch delete với transaction
+   * Batch delete với transaction
    */
   public async deleteBatch(filters: QueryFilter[]): Promise<number> {
     logger.debug("Deleting batch with transaction", {
@@ -615,8 +614,6 @@ export abstract class BaseService<TModel = any> {
       entityName: this.entityName,
       affectedCount: count
     });
-
-    // Hook for after update
   }
 
   protected async beforeDelete(filter: QueryFilter): Promise<void> {
@@ -625,8 +622,6 @@ export abstract class BaseService<TModel = any> {
       entityName: this.entityName,
       filterKeys: Object.keys(filter)
     });
-
-    // Hook for before delete
   }
 
   protected async afterDelete(count: number): Promise<void> {
@@ -635,8 +630,6 @@ export abstract class BaseService<TModel = any> {
       entityName: this.entityName,
       affectedCount: count
     });
-
-    // Hook for after delete
   }
 
   // ==================== STATUS & LIFECYCLE ====================
@@ -690,7 +683,7 @@ export abstract class BaseService<TModel = any> {
   // ==================== UTILITY METHODS ====================
 
   /**
-   * 🆕 Kiểm tra health của service
+   * Kiểm tra health của service
    */
   public async healthCheck(): Promise<boolean> {
     logger.debug("Performing health check", {
@@ -721,7 +714,7 @@ export abstract class BaseService<TModel = any> {
   }
 
   /**
-   * 🆕 Refresh connection (force reconnect)
+   * Refresh connection (force reconnect)
    */
   public async refresh(): Promise<void> {
     logger.info("Refreshing service connection", {

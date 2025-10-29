@@ -111,8 +111,13 @@ export abstract class BaseAdapter implements IAdapter {
   // 🔌 CONNECTION MANAGEMENT (IMPROVED)
   // ==========================================
 
+  isSupported(): boolean {
+    throw new Error(
+      "isSupported method must be implemented by DatabaseAdapter"
+    );
+  }
   async connect(config: DbConfig): Promise<IConnection> {
-    throw new Error("Connect method must be implemented by ConnectionFactory");
+    throw new Error("Connect method must be implemented by DatabaseAdapter");
   }
 
   async disconnect(): Promise<void> {
@@ -129,10 +134,6 @@ export abstract class BaseAdapter implements IAdapter {
 
   isConnected(): boolean {
     return this.connection !== null && this.connection.isConnected;
-  }
-
-  isSupported(): boolean {
-    return false;
   }
 
   getConnection(): IConnection | null {

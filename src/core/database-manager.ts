@@ -1,5 +1,5 @@
 // ========================
-// src/core/database-manager.ts
+// src/core/database-manager.ts (FIXED ADAPTER SHARING)
 // ========================
 
 import { UniversalDAO } from "./universal-dao";
@@ -16,7 +16,7 @@ import { createModuleLogger, ORMModules } from "../logger";
 const logger = createModuleLogger(ORMModules.DATABASE_MANAGER);
 
 /**
- * Database Manager (Singleton) - REFACTORED
+ * Database Manager (Singleton) - FIXED để đảm bảo adapter sharing
  */
 export class DatabaseManager {
   private static instance: DatabaseManager;
@@ -39,7 +39,6 @@ export class DatabaseManager {
   }
 
   // ==================== SCHEMA MANAGEMENT ====================
-  // Delegate to DatabaseFactory
 
   public static registerSchema(key: string, schema: DatabaseSchema): void {
     logger.trace("Registering schema via DatabaseManager", { key });
@@ -79,16 +78,29 @@ export class DatabaseManager {
 
   /**
    * Đăng ký adapter instance cho schema
+   * ✅ KEY FIX: Khi user đăng ký adapter, nó sẽ được dùng cho tất cả operations
    */
   public static registerAdapterInstance(
     schemaKey: string,
     adapter: IAdapter<any>
   ): void {
-    logger.trace("Registering adapter instance via DatabaseManager", { schemaKey });
+    logger.debug("Registering adapter instance via DatabaseManager", { 
+      schemaKey,
+      isConnected: adapter.isConnected() 
+    });
 
+    // Đăng ký vào DatabaseFactory
     DatabaseFactory.registerAdapterInstance(schemaKey, adapter);
 
-    logger.debug("Adapter instance registered successfully via DatabaseManager", { schemaKey });
+    // ✅ CRITICAL: Nếu đã có DAO trong cache, update adapter của nó
+    const existingDAO = this.daoCache.get(schemaKey);
+    if (existingDAO) {
+      logger.debug("Updating existing DAO with new adapter", { schemaKey });
+      // DAO sẽ sử dụng adapter mới
+      (existingDAO as any).adapter = adapter;
+    }
+
+    logger.info("Adapter instance registered and synchronized", { schemaKey });
   }
 
   /**
@@ -100,35 +112,81 @@ export class DatabaseManager {
     return DatabaseFactory.getAdapterInstance(schemaKey);
   }
 
-  // ==================== DAO MANAGEMENT ====================
+  // ==================== DAO MANAGEMENT (FIXED) ====================
 
   /**
-   * Lấy hoặc tạo DAO cho schema
+   * ✅ FIXED: Lấy hoặc tạo DAO - Đảm bảo dùng adapter đã register
    */
   public static async getDAO(
     schemaKey: string,
     options?: Partial<DbFactoryOptions>
   ): Promise<UniversalDAO<any>> {
-    logger.trace("Getting DAO", { schemaKey, optionsKeys: options ? Object.keys(options) : [] });
+    logger.debug("Getting DAO with adapter sharing", { 
+      schemaKey, 
+      hasCachedDAO: this.daoCache.has(schemaKey),
+      hasRegisteredAdapter: !!DatabaseFactory.getAdapterInstance(schemaKey)
+    });
 
-    // 1. Kiểm tra cache
+    // 1. Kiểm tra cache - nếu có và adapter còn connected
     const cachedDAO = this.daoCache.get(schemaKey);
-    if (cachedDAO && cachedDAO.getAdapter().isConnected()) {
-      logger.debug("Returning cached DAO", { schemaKey });
-      return cachedDAO;
+    if (cachedDAO) {
+      const adapter = cachedDAO.getAdapter();
+      if (adapter.isConnected()) {
+        logger.debug("Returning cached DAO with active connection", { schemaKey });
+        return cachedDAO;
+      } else {
+        logger.debug("Cached DAO has disconnected adapter, will recreate", { schemaKey });
+      }
     }
 
-    logger.debug("No valid cached DAO found, creating new one", { schemaKey });
+    // 2. ✅ KEY FIX: Kiểm tra xem đã có adapter instance được register chưa
+    const existingAdapter = DatabaseFactory.getAdapterInstance(schemaKey);
+    
+    if (existingAdapter) {
+      logger.info("Found registered adapter, using it for DAO creation", { 
+        schemaKey,
+        isConnected: existingAdapter.isConnected() 
+      });
+      
+      // Đảm bảo adapter đã connected
+      if (!existingAdapter.isConnected()) {
+        logger.debug("Registered adapter not connected, will auto-connect", { schemaKey });
+      }
+      
+      // Inject adapter vào options
+      options = {
+        ...options,
+        adapter: existingAdapter,
+        autoConnect: true // Đảm bảo auto-connect
+      };
+    } else {
+      logger.debug("No registered adapter found, will create new one", { schemaKey });
+    }
 
-    // 2. Tạo DAO mới từ DatabaseFactory
+    // 3. Tạo DAO mới từ DatabaseFactory (sẽ dùng adapter đã inject hoặc tạo mới)
     const newDAO = await DatabaseFactory.createDAO(schemaKey, options);
     
-    // 3. Lưu vào cache
+    // 4. Lưu vào cache
     this.daoCache.set(schemaKey, newDAO);
 
-    logger.info("New DAO created and cached successfully", { schemaKey });
+    logger.info("DAO created/updated and cached successfully", { 
+      schemaKey,
+      usedExistingAdapter: !!existingAdapter 
+    });
 
     return newDAO;
+  }
+
+  /**
+   * ✅ NEW: Phương thức tiện ích để đảm bảo có DAO với adapter đã register
+   */
+  public static async getOrCreateDAO(
+    schemaKey: string,
+    options?: Partial<DbFactoryOptions>
+  ): Promise<UniversalDAO<any>> {
+    logger.trace("Getting or creating DAO", { schemaKey });
+    
+    return this.getDAO(schemaKey, options);
   }
 
   /**
