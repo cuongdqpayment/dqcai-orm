@@ -3,17 +3,24 @@
 // ========================
 
 import { BaseAdapter } from "../core/base-adapter";
-import { DatabaseType, EntitySchemaDefinition } from "../types/orm.types";
+import {
+  DatabaseType,
+  EntitySchemaDefinition,
+  IConnection,
+} from "../types/orm.types";
 import { QueryHelper } from "../utils/query-helper";
 import { createModuleLogger, ORMModules } from "../logger";
+import { SQLServerConfig } from "../types";
 const logger = createModuleLogger(ORMModules.SQLSERVER_ADAPTER);
 
 export class SQLServerAdapter extends BaseAdapter {
   type: DatabaseType = "sqlserver";
   databaseType: DatabaseType = "sqlserver";
   private pool: any = null;
-  
-  // chuyển các hàm của hỗ trợ sang adapter để được sử dụng khi gọi thay vì gọi trong connection
+
+  /*
+  Chuyển 2 hàm isSupported và connect về luôn Adapter, không cần tạo connection nữa
+  */
   isSupported(): boolean {
     // Nếu đã connect → supported
     if (this.pool || this.isConnected()) {
@@ -31,6 +38,56 @@ export class SQLServerAdapter extends BaseAdapter {
       logger.debug("SQL Server module 'mssql' is not supported");
 
       return false;
+    }
+  }
+
+  async connect(config: SQLServerConfig): Promise<IConnection> {
+    logger.debug("Connecting to SQL Server", {
+      database: config.database,
+      host: config.host || "localhost",
+      port: config.port || 1433,
+    });
+
+    try {
+      logger.trace("Dynamically importing 'mssql' module");
+
+      const sql = await import("mssql");
+
+      logger.trace("Connecting to SQL Server pool");
+
+      const pool = await sql.connect(config);
+
+      logger.trace("Creating IConnection object");
+
+      const connection: IConnection = {
+        rawConnection: pool,
+        isConnected: true,
+        close: async () => {
+          logger.trace("Closing SQL Server connection pool");
+          await pool.close();
+        },
+      };
+
+      this.pool = pool;
+      this.connection = connection;
+      this.config = config;
+
+      logger.info("SQL Server connection established successfully", {
+        database: config.database,
+        host: config.host || "localhost",
+        port: config.port || 1433,
+      });
+
+      return connection;
+    } catch (error) {
+      logger.error("SQL Server connection failed", {
+        database: config.database,
+        host: config.host || "localhost",
+        port: config.port || 1433,
+        error: (error as Error).message,
+      });
+
+      throw new Error(`SQL Server connection failed: ${error}`);
     }
   }
   // ==========================================

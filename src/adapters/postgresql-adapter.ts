@@ -3,9 +3,14 @@
 // ========================
 
 import { BaseAdapter } from "../core/base-adapter";
-import { DatabaseType, EntitySchemaDefinition } from "../types/orm.types";
+import {
+  DatabaseType,
+  EntitySchemaDefinition,
+  IConnection,
+} from "../types/orm.types";
 import { QueryHelper } from "../utils/query-helper";
 import { createModuleLogger, ORMModules } from "../logger";
+import { PostgreSQLConfig } from "../types";
 const logger = createModuleLogger(ORMModules.POSTGRESQL_ADAPTER);
 
 export class PostgreSQLAdapter extends BaseAdapter {
@@ -13,7 +18,9 @@ export class PostgreSQLAdapter extends BaseAdapter {
   databaseType: DatabaseType = "postgresql";
   private pool: any = null;
 
-  // chuyển các hàm của hỗ trợ sang adapter để được sử dụng khi gọi thay vì gọi trong connection
+  /*
+  Chuyển 2 hàm isSupported và connect về luôn Adapter, không cần tạo connection nữa
+  */
   isSupported(): boolean {
     // Nếu đã connect → supported
     if (this.pool || this.isConnected()) {
@@ -31,6 +38,56 @@ export class PostgreSQLAdapter extends BaseAdapter {
       logger.debug("PostgreSQL module 'pg' is not supported");
 
       return false;
+    }
+  }
+
+  async connect(config: PostgreSQLConfig): Promise<IConnection> {
+    logger.debug("Connecting to PostgreSQL", {
+      database: config.database,
+      host: config.host || "localhost",
+      port: config.port || 5432,
+    });
+
+    try {
+      logger.trace("Dynamically importing 'pg' module");
+
+      const { Pool } = await import("pg");
+
+      logger.trace("Creating PostgreSQL Pool instance");
+
+      const pool = new Pool(config as any);
+
+      logger.trace("Creating IConnection object");
+
+      const connection: IConnection = {
+        rawConnection: pool,
+        isConnected: true,
+        close: async () => {
+          logger.trace("Closing PostgreSQL connection pool");
+          await pool.end();
+        },
+      };
+
+      this.pool = pool;
+      this.connection = connection;
+      this.config = config;
+
+      logger.info("PostgreSQL connection established successfully", {
+        database: config.database,
+        host: config.host || "localhost",
+        port: config.port || 5432,
+      });
+
+      return connection;
+    } catch (error) {
+      logger.error("PostgreSQL connection failed", {
+        database: config.database,
+        host: config.host || "localhost",
+        port: config.port || 5432,
+        error: (error as Error).message,
+      });
+
+      throw new Error(`PostgreSQL connection failed: ${error}`);
     }
   }
   // ==========================================
