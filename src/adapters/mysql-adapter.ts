@@ -95,15 +95,8 @@ export class MySQLAdapter extends BaseAdapter {
   // ==========================================
   // REQUIRED ABSTRACT METHOD IMPLEMENTATIONS
   // ==========================================
-
-  /**
-   * ✅ MYSQL: Chuyển đổi kiểu dữ liệu
-   * - Date → ISO String hoặc MySQL datetime format
-   * - Boolean → 1/0 (TINYINT)
-   * - Object/Array → JSON stringify
-   */
   protected sanitizeValue(value: any): any {
-    logger.trace("Sanitizing value", { valueType: typeof value });
+    logger.trace("Sanitizing value", { valueType: typeof value, value: value });
 
     // Handle null/undefined
     if (value === null || value === undefined) {
@@ -111,10 +104,13 @@ export class MySQLAdapter extends BaseAdapter {
       return null;
     }
 
-    // Handle Date objects → MySQL datetime format
+    // ✅ FIX 1: Handle Date objects → MySQL datetime format
     if (value instanceof Date) {
       const formattedDate = value.toISOString().slice(0, 19).replace("T", " ");
-      logger.trace("Converted Date to MySQL datetime format");
+      logger.trace("Converted Date object to MySQL datetime format", {
+        original: value.toISOString(),
+        formatted: formattedDate,
+      });
       return formattedDate;
     }
 
@@ -137,8 +133,24 @@ export class MySQLAdapter extends BaseAdapter {
       return jsonString;
     }
 
-    // Handle strings (escape)
     if (typeof value === "string") {
+      const iso8601Pattern =
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z?$/;
+
+      if (iso8601Pattern.test(value)) {
+        const mysqlFormat = value
+          .replace("T", " ")
+          .replace(/\.\d{3}Z?$/, "")
+          .replace("Z", "");
+
+        logger.trace("Converted ISO 8601 string to MySQL datetime format", {
+          original: value,
+          formatted: mysqlFormat,
+        });
+
+        return mysqlFormat;
+      }
+
       const escapedValue = value.replace(/'/g, "''");
       logger.trace("Escaped string value");
       return escapedValue;
