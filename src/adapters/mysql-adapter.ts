@@ -96,7 +96,31 @@ export class MySQLAdapter extends BaseAdapter {
   // REQUIRED ABSTRACT METHOD IMPLEMENTATIONS
   // ==========================================
   protected sanitizeValue(value: any): any {
-    logger.trace("Sanitizing value", { valueType: typeof value, value: value });
+    logger.trace("Sanitizing value", {
+      valueType: typeof value,
+      value: typeof value === "bigint" ? value.toString() : value,
+    });
+
+    if (typeof value === "bigint") {
+      const MAX_SAFE_INTEGER = BigInt(Number.MAX_SAFE_INTEGER);
+      const MIN_SAFE_INTEGER = BigInt(Number.MIN_SAFE_INTEGER);
+
+      if (value <= MAX_SAFE_INTEGER && value >= MIN_SAFE_INTEGER) {
+        const numericValue = Number(value);
+        logger.trace("Converted BigInt to Number", {
+          original: value.toString(),
+          converted: numericValue,
+        });
+        return numericValue;
+      } else {
+        const stringValue = value.toString();
+        logger.trace("Converted large BigInt to String", {
+          original: value.toString(),
+          converted: stringValue,
+        });
+        return stringValue;
+      }
+    }
 
     // Handle null/undefined
     if (value === null || value === undefined) {

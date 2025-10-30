@@ -76,7 +76,7 @@ export class MariaDBAdapter extends MySQLAdapter {
       this.pool = pool;
       this.connection = connection;
       this.config = config;
-      
+
       // ✅ Store which driver we're using
       (this as any)._usingMariaDBDriver = usingMariaDBDriver;
 
@@ -84,7 +84,7 @@ export class MariaDBAdapter extends MySQLAdapter {
         database: config.database,
         host: config.host || "localhost",
         port: config.port || 3306,
-        driver: usingMariaDBDriver ? 'mariadb' : 'mysql2'
+        driver: usingMariaDBDriver ? "mariadb" : "mysql2",
       });
 
       return connection;
@@ -104,11 +104,16 @@ export class MariaDBAdapter extends MySQLAdapter {
   // ✅ OVERRIDE: executeRaw() - Handle MariaDB driver differences
   // ==========================================
   async executeRaw(query: string, params?: any[]): Promise<any> {
+    const sanitizedParamsForLogging = params?.map((p) =>
+      typeof p === "bigint" ? p.toString() : p
+    );
+
     logger.trace("Executing raw MariaDB query", {
       querySnippet:
         query.substring(0, Math.min(100, query.length)) +
         (query.length > 100 ? "..." : ""),
       paramsCount: params?.length || 0,
+      params: sanitizedParamsForLogging,
     });
 
     if (!this.pool) {
@@ -116,30 +121,32 @@ export class MariaDBAdapter extends MySQLAdapter {
       throw new Error("Not connected to MariaDB");
     }
 
+    const sanitizedParams = params?.map((p) => {
+      if (typeof p === "bigint") {
+        const MAX_SAFE = BigInt(Number.MAX_SAFE_INTEGER);
+        const MIN_SAFE = BigInt(Number.MIN_SAFE_INTEGER);
+        return p <= MAX_SAFE && p >= MIN_SAFE ? Number(p) : p.toString();
+      }
+      return p;
+    });
+
     const usingMariaDBDriver = (this as any)._usingMariaDBDriver;
 
     if (usingMariaDBDriver) {
-      // ✅ MariaDB driver (mariadb package)
-      // Returns result directly, NOT as [rows, fields] tuple
-      const result = await this.pool.query(query, params);
+      // Use sanitized params
+      const result = await this.pool.query(query, sanitizedParams);
 
-      // MariaDB result structure:
-      // - For SELECT: result is array of rows + metadata
-      // - For INSERT/UPDATE/DELETE: result has affectedRows, insertId
-      
       if (Array.isArray(result)) {
-        // SELECT query
         const resultData = {
           rows: result,
           rowCount: result.length,
           rowsAffected: result.length,
         };
-        logger.trace("SELECT query executed (MariaDB driver)", { 
-          rowCount: result.length 
+        logger.trace("SELECT query executed (MariaDB driver)", {
+          rowCount: result.length,
         });
         return resultData;
       } else {
-        // INSERT/UPDATE/DELETE query
         const resultData = {
           rows: [],
           rowCount: result.affectedRows || 0,
@@ -153,7 +160,7 @@ export class MariaDBAdapter extends MySQLAdapter {
         return resultData;
       }
     } else {
-      const [rows, fields] = await this.pool.query(query, params);
+      const [rows, fields] = await this.pool.query(query, sanitizedParams);
 
       if (Array.isArray(rows)) {
         const result = {
@@ -161,8 +168,8 @@ export class MariaDBAdapter extends MySQLAdapter {
           rowCount: rows.length,
           rowsAffected: rows.length,
         };
-        logger.trace("SELECT query executed (MySQL2 driver)", { 
-          rowCount: rows.length 
+        logger.trace("SELECT query executed (MySQL2 driver)", {
+          rowCount: rows.length,
         });
         return result;
       } else {
