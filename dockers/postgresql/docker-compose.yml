@@ -1,0 +1,29 @@
+# version: '3.8'
+
+services:
+  # Tên dịch vụ của bạn (có thể đổi)
+  db_postgres:
+    # Sử dụng image PostgreSQL
+    image: postgres:latest
+    
+    # Thiết lập biến môi trường
+    environment:
+      POSTGRES_USER: cuongdq
+      POSTGRES_PASSWORD: Cng3500888@
+      POSTGRES_DB: test
+      
+    # Ánh xạ cổng (Host:Container)
+    # Cổng 5432 trên máy Windows của bạn sẽ kết nối tới 5432 trong container
+    ports:
+      - "5432:5432"
+      
+    # Thiết lập Volume (để dữ liệu không bị mất khi container bị xóa)
+    volumes:
+      - postgres_data:/var/lib/postgresql
+      
+    # Khởi động lại container nếu nó dừng đột ngột
+    restart: always
+
+# Định nghĩa Volume
+volumes:
+  postgres_data:

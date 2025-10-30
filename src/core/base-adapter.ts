@@ -40,7 +40,7 @@ export abstract class BaseAdapter implements IAdapter {
   sanitize(value: any) {
     throw new Error("Method not implemented.");
   }
-  
+
   abstract type: DatabaseType;
   abstract databaseType: DatabaseType;
 
@@ -80,7 +80,7 @@ export abstract class BaseAdapter implements IAdapter {
       "isSupported method must be implemented by DatabaseAdapter"
     );
   }
-  
+
   async connect(config: DbConfig): Promise<IConnection> {
     throw new Error("Connect method must be implemented by DatabaseAdapter");
   }
@@ -278,7 +278,10 @@ export abstract class BaseAdapter implements IAdapter {
 
     const result = await this.executeRaw(query, params);
 
-    logger.trace("Found records", { tableName, count: result.rows?.length || 0 });
+    logger.trace("Found records", {
+      tableName,
+      count: result.rows?.length || 0,
+    });
 
     return result.rows || [];
   }
@@ -343,7 +346,7 @@ export abstract class BaseAdapter implements IAdapter {
       this.type,
       keys.length + 1
     );
-    
+
     const allParams = [...values, ...whereParams];
 
     let query = `UPDATE ${QueryHelper.quoteIdentifier(
@@ -360,9 +363,10 @@ export abstract class BaseAdapter implements IAdapter {
     });
 
     const result = await this.executeRaw(query, allParams);
-    
+
     // ✅ Handle different result formats
-    const affected = result.rowCount || result.rowsAffected || result.changes || 0;
+    const affected =
+      result.rowCount || result.rowsAffected || result.changes || 0;
 
     if (affected === 0) {
       logger.warn("No records updated", { tableName });
@@ -415,9 +419,10 @@ export abstract class BaseAdapter implements IAdapter {
     });
 
     const result = await this.executeRaw(query, params);
-    
+
     // ✅ Handle different result formats
-    const affected = result.rowCount || result.rowsAffected || result.changes || 0;
+    const affected =
+      result.rowCount || result.rowsAffected || result.changes || 0;
 
     if (affected === 0) {
       logger.warn("No records deleted", { tableName });
@@ -508,7 +513,7 @@ export abstract class BaseAdapter implements IAdapter {
   // ==========================================
   // 🛠️ UTILITY METHODS
   // ==========================================
-
+  
   protected buildColumnDefinition(
     fieldName: string,
     fieldDef: FieldDefinition
@@ -517,30 +522,63 @@ export abstract class BaseAdapter implements IAdapter {
 
     const quotedName = QueryHelper.quoteIdentifier(fieldName, this.type);
     let sqlType = this.mapFieldTypeToDBType(fieldDef.type, fieldDef.length);
+
+    if (fieldDef.autoIncrement) {
+      const autoIncrementDef = this.buildAutoIncrementColumn(
+        quotedName,
+        sqlType,
+        fieldDef.primaryKey || false
+      );
+
+      let columnDef = autoIncrementDef;
+
+      if (fieldDef.unique && !fieldDef.primaryKey) columnDef += " UNIQUE";
+
+      return columnDef;
+    }
+
     let columnDef = `${quotedName} ${sqlType}`;
 
     if (fieldDef.primaryKey) columnDef += " PRIMARY KEY";
-    if (fieldDef.autoIncrement)
-      columnDef = this.buildAutoIncrementColumn(quotedName, sqlType);
     if (fieldDef.required && !fieldDef.primaryKey) columnDef += " NOT NULL";
-    if (fieldDef.unique) columnDef += " UNIQUE";
+    if (fieldDef.unique && !fieldDef.primaryKey) columnDef += " UNIQUE";
     if (fieldDef.default !== undefined)
       columnDef += ` DEFAULT ${this.formatDefaultValue(fieldDef.default)}`;
 
     return columnDef;
   }
 
-  protected buildAutoIncrementColumn(name: string, type: string): string {
+  protected buildAutoIncrementColumn(
+    name: string,
+    type: string,
+    isPrimaryKey: boolean = true // ✅ Thêm tham số
+  ): string {
     switch (this.type) {
       case "postgresql":
-        return `${name} SERIAL`;
+        // PostgreSQL: SERIAL tự động là NOT NULL, thêm PRIMARY KEY nếu cần
+        return isPrimaryKey ? `${name} SERIAL PRIMARY KEY` : `${name} SERIAL`;
+
       case "mysql":
       case "mariadb":
-        return `${name} ${type} AUTO_INCREMENT`;
+        // ✅ FIX: MySQL/MariaDB PHẢI có PRIMARY KEY với AUTO_INCREMENT
+        if (isPrimaryKey) {
+          return `${name} ${type} AUTO_INCREMENT PRIMARY KEY`;
+        } else {
+          // ⚠️ MySQL không cho phép AUTO_INCREMENT mà không có KEY
+          // Fallback: tạo UNIQUE KEY
+          return `${name} ${type} AUTO_INCREMENT UNIQUE`;
+        }
+
       case "sqlite":
+        // SQLite: INTEGER PRIMARY KEY AUTOINCREMENT
         return `${name} INTEGER PRIMARY KEY AUTOINCREMENT`;
+
       case "sqlserver":
-        return `${name} ${type} IDENTITY(1,1)`;
+        // SQL Server: IDENTITY với PRIMARY KEY
+        return isPrimaryKey
+          ? `${name} ${type} IDENTITY(1,1) PRIMARY KEY`
+          : `${name} ${type} IDENTITY(1,1)`;
+
       default:
         return `${name} ${type}`;
     }
@@ -689,7 +727,8 @@ export abstract class BaseAdapter implements IAdapter {
     const result = await this.executeRaw(query, params);
     return {
       rows: result.rows || [],
-      rowsAffected: result.rowsAffected || result.rowCount || result.changes || 0,
+      rowsAffected:
+        result.rowsAffected || result.rowCount || result.changes || 0,
       lastInsertId: result.lastInsertId || result.insertId,
       metadata: result,
     };

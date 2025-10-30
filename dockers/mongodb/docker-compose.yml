@@ -1,0 +1,32 @@
+# version: '3.8'
+
+services:
+  # Tên dịch vụ
+  mongodb-db:
+    # Sử dụng image MongoDB chính thức mới nhất
+    image: mongo:latest
+    
+    # Đặt biến môi trường
+    environment:
+      # Tùy chọn: Tên người dùng quản trị
+      MONGO_INITDB_ROOT_USERNAME: mongo_admin
+      # Tùy chọn: Mật khẩu người dùng quản trị (BẮT BUỘC cho môi trường sản xuất)
+      MONGO_INITDB_ROOT_PASSWORD: YourStrongPassword!123 
+      # Tùy chọn: Tên database sẽ được tạo tự động khi khởi tạo
+      MONGO_INITDB_DATABASE: my_sample_db
+      
+    # Ánh xạ cổng (Mặc định MongoDB là 27017)
+    ports:
+      - "27017:27017"
+      
+    # Thiết lập Volume để lưu trữ dữ liệu bền vững
+    volumes:
+      # Thư mục dữ liệu mặc định của MongoDB trong container
+      - mongodb_data:/data/db
+      
+    # Đảm bảo container chạy lại sau khi khởi động lại Docker Desktop
+    restart: always
+
+# Định nghĩa Managed Volume
+volumes:
+  mongodb_data:

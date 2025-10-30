@@ -609,11 +609,14 @@ export class OracleAdapter extends BaseAdapter {
 
     if (fieldDef.required && !(fieldDef.primaryKey || fieldDef.primary_key)) {
       columnDef += " NOT NULL";
-    } else if (fieldDef.nullable === false) {
+    } else if (
+      fieldDef.nullable === false &&
+      !(fieldDef.primaryKey || fieldDef.primary_key)
+    ) {
       columnDef += " NOT NULL";
     }
 
-    if (fieldDef.unique) {
+    if (fieldDef.unique && !(fieldDef.primaryKey || fieldDef.primary_key)) {
       columnDef += " UNIQUE";
     }
 

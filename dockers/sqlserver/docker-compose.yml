@@ -1,0 +1,32 @@
+# version: '3.8'
+
+services:
+  # Tên dịch vụ
+  sqlserver-db:
+    # Sử dụng image SQL Server 2022 Developer Edition
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    
+    # Đặt biến môi trường
+    environment:
+      # BẮT BUỘC: Chấp nhận Giấy phép Người dùng Cuối
+      ACCEPT_EULA: Y
+      # BẮT BUỘC: Đặt mật khẩu SA (Super Administrator)
+      SA_PASSWORD: YourStrongPassword!123 
+      # Chọn phiên bản (Developer, Express, Standard, Enterprise)
+      MSSQL_PID: Developer
+      
+    # Ánh xạ cổng (Mặc định SQL Server là 1433)
+    ports:
+      - "1433:1433"
+      
+    # Thiết lập Volume để lưu trữ dữ liệu bền vững
+    volumes:
+      # Thư mục dữ liệu mặc định của SQL Server trong Linux container
+      - sqlserver_data:/var/opt/mssql
+      
+    # Đảm bảo container chạy lại sau khi khởi động lại Docker Desktop
+    restart: always
+
+# Định nghĩa Managed Volume
+volumes:
+  sqlserver_data:

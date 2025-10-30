@@ -1,0 +1,34 @@
+# version: '3.8'
+
+services:
+  # Tên dịch vụ
+  mariadb-db:
+    # Sử dụng image MariaDB chính thức
+    image: mariadb:latest 
+    
+    # Đặt biến môi trường
+    environment:
+      # BẮT BUỘC: Đặt mật khẩu root
+      MARIADB_ROOT_PASSWORD: Cng3500888@
+      # Tùy chọn: Tên database sẽ được tạo tự động
+      MARIADB_DATABASE: test
+      # Tùy chọn: Tên người dùng sẽ được tạo tự động
+      MARIADB_USER: cuongdq
+      # Tùy chọn: Mật khẩu cho người dùng trên
+      MARIADB_PASSWORD: Cng3500888@
+      
+    # Ánh xạ cổng (Mặc định MariaDB/MySQL là 3306)
+    ports:
+      - "3307:3306"
+      
+    # Thiết lập Volume để lưu trữ dữ liệu bền vững
+    volumes:
+      # Lưu ý: Thư mục dữ liệu của MariaDB cũng là /var/lib/mysql
+      - mariadb_data:/var/lib/mysql/mariadb
+      
+    # Khởi động lại container nếu có lỗi
+    restart: always
+
+# Định nghĩa Managed Volume
+volumes:
+  mariadb_data:

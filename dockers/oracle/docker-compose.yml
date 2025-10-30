@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  oracle-db:
+    # Sử dụng tên image bạn vừa build
+    image: oracle/database:21.3.0-xe
+    
+    # Đặt biến môi trường
+    environment:
+      # BẮT BUỘC: Đặt mật khẩu, phải đáp ứng các yêu cầu về độ phức tạp của Oracle
+      ORACLE_PWD: YourStrongPassword123
+      # Tên PDB (Pluggable Database) mặc định
+      ORACLE_PDB: ORCLPDB1 
+      
+    # Ánh xạ cổng (Mặc định của Oracle là 1521)
+    ports:
+      - "1521:1521"
+      - "5500:5500" # Cổng cho Enterprise Manager (APEX)
+      
+    # Thiết lập Volume
+    volumes:
+      - oracle_data:/opt/oracle/oradata
+      
+    # Tăng giới hạn bộ nhớ (Oracle cần nhiều RAM)
+    shm_size: 2g 
+    restart: always
+
+volumes:
+  oracle_data:
