@@ -87,8 +87,26 @@ export abstract class BaseAdapter implements IAdapter {
 
   async disconnect(): Promise<void> {
     logger.info("Disconnecting from database", { type: this.type });
-    if (this.connection) {
+    if (!this.connection) {
+      logger.trace("No connection to disconnect");
+      return;
+    }
+
+    if (!this.connection.isConnected) {
+      logger.trace("Connection already disconnected");
+      this.connection = null;
+      return;
+    }
+
+    try {
       await this.connection.close();
+      logger.info("Connection closed successfully", { type: this.type });
+    } catch (error: any) {
+      logger.warn("Error during disconnect (might be already closed)", {
+        type: this.type,
+        error: error.message,
+      });
+    } finally {
       this.connection = null;
     }
   }
@@ -513,7 +531,7 @@ export abstract class BaseAdapter implements IAdapter {
   // ==========================================
   // 🛠️ UTILITY METHODS
   // ==========================================
-  
+
   protected buildColumnDefinition(
     fieldName: string,
     fieldDef: FieldDefinition
