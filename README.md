@@ -11,8 +11,12 @@ A powerful, flexible, and database-agnostic ORM library for TypeScript/JavaScrip
 - [Installation](#-installation)
 - [Supported Databases](#️-supported-databases)
 - [Quick Start](#-quick-start)
-- [Complete Examples](#-complete-examples)
 - [API Reference](#-api-reference)
+  - [Basic CRUD Operations](#basic-crud-operations)
+  - [Advanced CRUD Operations](#advanced-crud-operations)
+  - [Schema Management](#schema-management)
+  - [Index Management](#index-management)
+  - [Transaction Support](#transaction-support)
 - [Advanced Usage](#-advanced-usage)
 - [Best Practices](#-best-practices)
 
@@ -31,6 +35,8 @@ A powerful, flexible, and database-agnostic ORM library for TypeScript/JavaScrip
 - 🔍 **Advanced Queries** - Rich query operators ($gt, $lt, $in, $like, $between, etc.)
 - 🔗 **Relations** - Foreign keys and joins support
 - 💾 **Transactions** - ACID compliant transaction support
+- 🚀 **Advanced CRUD** - Upsert, pagination, soft delete, bulk operations, aggregations
+- 📊 **Aggregations** - MongoDB-style aggregation pipeline support
 - ⚡ **Performance** - Optimized for speed with connection caching
 
 ---
@@ -123,9 +129,25 @@ const myAppSchema: DatabaseSchema = {
           nullable: true 
         },
         { 
+          name: "status", 
+          type: "string", 
+          length: 20, 
+          default: "active" 
+        },
+        { 
           name: "is_active", 
           type: "boolean", 
           default: true 
+        },
+        { 
+          name: "deleted", 
+          type: "boolean", 
+          default: false 
+        },
+        { 
+          name: "deleted_at", 
+          type: "timestamp", 
+          nullable: true 
         },
         { 
           name: "created_at", 
@@ -138,89 +160,22 @@ const myAppSchema: DatabaseSchema = {
 };
 ```
 
-### 2. Configure Database Connection
-
-#### SQLite Configuration
+### 2. Create Service Classes
 
 ```typescript
-import { SQLiteConfig } from "@dqcai/orm";
+import { BaseService } from "@dqcai/orm";
 
-const sqliteConfig: SQLiteConfig = {
-  databaseType: "sqlite",
-  database: "myapp",
-  filename: "./myapp.db",
-  // For in-memory database:
-  // memory: true
-};
-```
-
-#### PostgreSQL Configuration
-
-```typescript
-import { PostgreSQLConfig } from "@dqcai/orm";
-
-const postgresConfig: PostgreSQLConfig = {
-  databaseType: "postgresql",
-  host: "localhost",
-  port: 5432,
-  database: "myapp",
-  user: "postgres",
-  password: "password",
-  ssl: false,
-  max: 10 // connection pool size
-};
-```
-
-#### MySQL Configuration
-
-```typescript
-import { MySQLConfig } from "@dqcai/orm";
-
-const mysqlConfig: MySQLConfig = {
-  databaseType: "mysql",
-  host: "localhost",
-  port: 3306,
-  database: "myapp",
-  user: "root",
-  password: "password",
-  charset: "utf8mb4",
-  connectionLimit: 10
-};
-```
-
-#### MongoDB Configuration
-
-```typescript
-import { MongoDBConfig } from "@dqcai/orm";
-
-const mongoConfig: MongoDBConfig = {
-  databaseType: "mongodb",
-  url: "mongodb://localhost:27017",
-  database: "myapp",
-  options: {
-    maxPoolSize: 10,
-    minPoolSize: 2
-  }
-};
-```
-
-### 3. Define Your Entity Types
-
-```typescript
 interface User {
   id: number;
   name: string;
   email: string;
   age?: number;
+  status: string;
   is_active: boolean;
+  deleted: boolean;
+  deleted_at?: Date;
   created_at: Date;
 }
-```
-
-### 4. Create Service Classes
-
-```typescript
-import { BaseService } from "@dqcai/orm";
 
 class UserService extends BaseService<User> {
   constructor() {
@@ -233,7 +188,7 @@ class UserService extends BaseService<User> {
   }
 
   async getActiveUsers(): Promise<User[]> {
-    return this.find({ is_active: true });
+    return this.find({ is_active: true, deleted: false });
   }
 
   // Lifecycle hooks
@@ -252,7 +207,7 @@ class UserService extends BaseService<User> {
 }
 ```
 
-### 5. Initialize and Use
+### 3. Initialize and Use
 
 ```typescript
 import {
@@ -278,19 +233,9 @@ async function initialize() {
   await factory.connect(adapter, sqliteConfig);
   DatabaseManager.registerAdapterInstance("myapp", adapter);
 
-  // 4. Create tables
-  for (const [tableName, entitySchema] of Object.entries(myAppSchema.schemas)) {
-    const exists = await adapter.tableExists(tableName);
-    if (!exists) {
-      const schemaDefinition: any = {};
-      for (const col of entitySchema.cols) {
-        if (col.name) {
-          schemaDefinition[col.name] = col;
-        }
-      }
-      await adapter.createTable(tableName, schemaDefinition);
-    }
-  }
+  // 4. Sync tables
+  const dao = await DatabaseManager.getDAO("myapp");
+  await dao.syncAllTables();
 
   // 5. Register services
   ServiceManager.getInstance().registerService({
@@ -307,25 +252,20 @@ async function main() {
   const userService = await ServiceManager.getInstance()
     .getService<UserService>("myapp", "users");
 
-  // CREATE
+  // Basic CRUD
   const user = await userService.create({
     name: "John Doe",
     email: "john@example.com",
     age: 30
   });
-  console.log("Created:", user);
 
-  // READ
-  const users = await userService.find({ is_active: true });
-  console.log("Active users:", users.length);
+  // Advanced operations
+  const result = await userService.paginate(
+    { is_active: true },
+    { page: 1, limit: 20, sort: { created_at: -1 } }
+  );
 
-  // UPDATE
-  await userService.updateById(user.id, { age: 31 });
-  console.log("Updated user");
-
-  // DELETE
-  await userService.deleteById(user.id);
-  console.log("Deleted user");
+  console.log(`Found ${result.total} users`);
 }
 
 main().catch(console.error);
@@ -333,95 +273,791 @@ main().catch(console.error);
 
 ---
 
-## 📚 Complete Examples
-
-See the full SQLite Blog Application example in the artifact above for:
-- Complete database schema with multiple tables
-- Service layer implementation
-- CRUD operations
-- Advanced queries
-- Relationships and joins
-- Tags (many-to-many)
-- Comments (nested data)
-- Transactions
-- Batch operations
-- Aggregations
-- Raw SQL queries
-
----
-
 ## 📖 API Reference
 
-### BaseService Methods
+### Basic CRUD Operations
 
 #### Create Operations
 
 ```typescript
 // Create single record
-async create(data: Partial<T>): Promise<T>
+const user = await userService.create({
+  name: "John Doe",
+  email: "john@example.com",
+  age: 30
+});
 
 // Create multiple records
-async createMany(data: Partial<T>[]): Promise<T[]>
+const users = await userService.createMany([
+  { name: "Alice", email: "alice@example.com" },
+  { name: "Bob", email: "bob@example.com" }
+]);
 
 // Create in batch with transaction
-async createBatch(data: Partial<T>[]): Promise<T[]>
+const batchUsers = await userService.createBatch([
+  { name: "User 1", email: "user1@example.com" },
+  { name: "User 2", email: "user2@example.com" }
+]);
 ```
 
 #### Read Operations
 
 ```typescript
-// Find all records matching filter
-async find(filter?: QueryFilter, options?: QueryOptions): Promise<T[]>
+// Find all records
+const users = await userService.find();
+
+// Find with filter
+const activeUsers = await userService.find({ 
+  is_active: true,
+  age: { $gte: 18 }
+});
+
+// Find with options
+const sortedUsers = await userService.find(
+  { status: "active" },
+  { 
+    sort: { created_at: -1 },
+    limit: 10,
+    offset: 0,
+    select: ["id", "name", "email"]
+  }
+);
 
 // Find single record
-async findOne(filter: QueryFilter, options?: QueryOptions): Promise<T | null>
+const user = await userService.findOne({ email: "john@example.com" });
 
 // Find by ID
-async findById(id: any): Promise<T | null>
+const user = await userService.findById(1);
 
 // Count records
-async count(filter?: QueryFilter): Promise<number>
+const count = await userService.count({ is_active: true });
 
-// Check if records exist
-async exists(filter: QueryFilter): Promise<boolean>
+// Check existence
+const exists = await userService.exists({ email: "john@example.com" });
 ```
 
 #### Update Operations
 
 ```typescript
 // Update multiple records
-async update(filter: QueryFilter, data: Partial<T>): Promise<number>
+const updatedCount = await userService.update(
+  { status: "pending" },
+  { status: "active" }
+);
 
 // Update single record
-async updateOne(filter: QueryFilter, data: Partial<T>): Promise<boolean>
+const updated = await userService.updateOne(
+  { email: "john@example.com" },
+  { age: 31 }
+);
 
 // Update by ID
-async updateById(id: any, data: Partial<T>): Promise<boolean>
+const updated = await userService.updateById(1, { age: 32 });
 
 // Batch update with transaction
-async updateBatch(updates: Array<{filter, data}>): Promise<number>
+const updatedCount = await userService.updateBatch([
+  { filter: { status: "pending" }, data: { status: "active" } },
+  { filter: { age: { $lt: 18 } }, data: { status: "minor" } }
+]);
 ```
 
 #### Delete Operations
 
 ```typescript
 // Delete multiple records
-async delete(filter: QueryFilter): Promise<number>
+const deletedCount = await userService.delete({ status: "inactive" });
 
 // Delete single record
-async deleteOne(filter: QueryFilter): Promise<boolean>
+const deleted = await userService.deleteOne({ email: "john@example.com" });
 
 // Delete by ID
-async deleteById(id: any): Promise<boolean>
+const deleted = await userService.deleteById(1);
 
-// Batch delete
+// Batch delete with transaction
 const deletedCount = await userService.deleteBatch([
   { status: "inactive" },
   { created_at: { $lt: oldDate } }
 ]);
 ```
 
-### 4. Multiple Database Connections
+---
+
+### Advanced CRUD Operations
+
+#### 1. Upsert (Insert or Update)
+
+Insert a new record if it doesn't exist, or update if it does:
+
+```typescript
+// Upsert by email
+const user = await userService.upsert(
+  { email: "john@example.com" },
+  { 
+    name: "John Doe", 
+    email: "john@example.com",
+    age: 30 
+  }
+);
+
+// If user exists: updates the record
+// If user doesn't exist: creates new record
+```
+
+#### 2. Pagination
+
+Fetch paginated results with metadata:
+
+```typescript
+const result = await userService.paginate(
+  { status: "active" },
+  { 
+    page: 1, 
+    limit: 20,
+    sort: { created_at: -1 }
+  }
+);
+
+console.log(`Page ${result.page} of ${result.totalPages}`);
+console.log(`Total records: ${result.total}`);
+console.log(`Records on this page: ${result.data.length}`);
+
+// Result structure:
+// {
+//   data: User[],
+//   total: number,
+//   page: number,
+//   limit: number,
+//   totalPages: number
+// }
+```
+
+#### 3. Find or Create
+
+Find an existing record or create it if not found:
+
+```typescript
+const { record, created } = await userService.findOrCreate(
+  { email: "jane@example.com" },
+  { 
+    name: "Jane Doe", 
+    email: "jane@example.com",
+    age: 25 
+  }
+);
+
+if (created) {
+  console.log("New user created");
+} else {
+  console.log("Existing user found");
+}
+```
+
+#### 4. Distinct Values
+
+Get unique values for a specific field:
+
+```typescript
+// Get all unique statuses
+const statuses = await userService.distinct<string>("status");
+// Result: ["active", "inactive", "pending"]
+
+// Get unique statuses with filter
+const activeCountries = await userService.distinct<string>(
+  "country",
+  { status: "active" }
+);
+```
+
+#### 5. Increment / Decrement
+
+Atomically increment or decrement numeric fields:
+
+```typescript
+// Increment views count by 1
+await productService.increment({ id: 1 }, "views");
+
+// Increment by custom value
+await productService.increment({ id: 1 }, "views", 5);
+
+// Decrement stock
+await productService.decrement({ id: 1 }, "stock", 10);
+
+// Works with multiple records
+const updatedCount = await productService.increment(
+  { category: "electronics" },
+  "popularity",
+  1
+);
+```
+
+#### 6. Soft Delete & Restore
+
+Mark records as deleted without actually removing them:
+
+```typescript
+// Soft delete (sets deleted=true, deleted_at=now)
+const deletedCount = await userService.softDelete({ id: 1 });
+
+// Restore soft-deleted records
+const restoredCount = await userService.restore({ id: 1 });
+
+// Note: Regular find() operations should filter out soft-deleted records
+// Override in your service:
+class UserService extends BaseService<User> {
+  async find(filter?: QueryFilter, options?: QueryOptions): Promise<User[]> {
+    return super.find({ ...filter, deleted: false }, options);
+  }
+}
+```
+
+#### 7. Bulk Write Operations
+
+Execute multiple operations in a single call (MongoDB-style):
+
+```typescript
+const result = await userService.bulkWrite([
+  {
+    insertOne: {
+      document: { name: "Alice", email: "alice@example.com" }
+    }
+  },
+  {
+    updateOne: {
+      filter: { id: 1 },
+      update: { age: 30 }
+    }
+  },
+  {
+    updateMany: {
+      filter: { status: "pending" },
+      update: { status: "active" }
+    }
+  },
+  {
+    deleteOne: {
+      filter: { id: 2 }
+    }
+  },
+  {
+    deleteMany: {
+      filter: { status: "inactive" }
+    }
+  }
+]);
+
+console.log(`Inserted: ${result.insertedCount}`);
+console.log(`Updated: ${result.modifiedCount}`);
+console.log(`Deleted: ${result.deletedCount}`);
+```
+
+#### 8. Aggregations
+
+Perform complex aggregations (MongoDB-style pipeline):
+
+```typescript
+// Group by status and count
+const statusStats = await userService.aggregate([
+  {
+    $match: { is_active: true }
+  },
+  {
+    $group: {
+      _id: "$status",
+      count: { $sum: 1 },
+      avgAge: { $avg: "$age" }
+    }
+  },
+  {
+    $sort: { count: -1 }
+  }
+]);
+
+// Advanced aggregation with multiple stages
+const monthlyStats = await orderService.aggregate([
+  {
+    $match: {
+      created_at: { $gte: new Date("2024-01-01") }
+    }
+  },
+  {
+    $group: {
+      _id: { 
+        year: { $year: "$created_at" },
+        month: { $month: "$created_at" }
+      },
+      totalOrders: { $sum: 1 },
+      totalRevenue: { $sum: "$amount" },
+      avgOrderValue: { $avg: "$amount" }
+    }
+  },
+  {
+    $sort: { "_id.year": 1, "_id.month": 1 }
+  }
+]);
+```
+
+#### 9. Raw Queries
+
+Execute raw SQL or database-specific queries:
+
+```typescript
+// Raw SQL query
+const users = await userService.raw<User[]>(
+  "SELECT * FROM users WHERE age > ? AND status = ?",
+  [18, "active"]
+);
+
+// Raw query with complex joins
+const result = await userService.raw(`
+  SELECT u.*, COUNT(o.id) as order_count
+  FROM users u
+  LEFT JOIN orders o ON u.id = o.user_id
+  WHERE u.status = ?
+  GROUP BY u.id
+  HAVING order_count > ?
+`, ["active", 5]);
+
+// For MongoDB, use native query format
+const users = await userService.raw({
+  find: "users",
+  filter: { 
+    age: { $gt: 18 },
+    status: "active"
+  },
+  projection: { name: 1, email: 1 }
+});
+```
+
+---
+
+### Schema Management
+
+Create, modify, and manage database schemas:
+
+```typescript
+// Create table from schema
+await userService.createTable();
+
+// Create table with custom schema
+await userService.createTable({
+  id: { type: "integer", primaryKey: true, autoIncrement: true },
+  name: { type: "string", length: 100, required: true },
+  email: { type: "string", length: 255, unique: true }
+});
+
+// Check if table exists
+const exists = await userService.tableExists();
+
+// Get table structure information
+const tableInfo = await userService.getTableInfo();
+console.log(tableInfo);
+
+// Alter table structure (add/modify columns)
+await userService.alterTable({
+  phone: { type: "string", length: 20, nullable: true },
+  address: { type: "text", nullable: true }
+});
+
+// Truncate table (delete all data but keep structure)
+await userService.truncateTable();
+
+// Drop table completely
+await userService.dropTable();
+```
+
+---
+
+### Index Management
+
+Create and manage database indexes for better query performance:
+
+```typescript
+// Create single-field index
+await userService.createIndex({
+  name: "idx_email",
+  fields: ["email"],
+  unique: true
+});
+
+// Create composite index
+await userService.createIndex({
+  name: "idx_status_created",
+  fields: ["status", "created_at"],
+  unique: false
+});
+
+// Create partial index (with condition)
+await userService.createIndex({
+  name: "idx_active_users",
+  fields: ["status"],
+  where: "is_active = true"
+});
+
+// Drop index
+await userService.dropIndex("idx_email");
+```
+
+---
+
+### Transaction Support
+
+Execute multiple operations atomically with transactions:
+
+```typescript
+// Method 1: Using withTransaction (recommended)
+await userService.withTransaction(async (service) => {
+  const user = await service.create({
+    name: "John Doe",
+    email: "john@example.com"
+  });
+  
+  await profileService.create({
+    user_id: user.id,
+    bio: "Software developer"
+  });
+  
+  await settingsService.create({
+    user_id: user.id,
+    theme: "dark"
+  });
+  
+  // If any operation fails, all changes are rolled back
+  // If all succeed, changes are committed automatically
+});
+
+// Method 2: Manual transaction control
+const tx = await userService.beginTransaction();
+
+try {
+  const user = await userService.create({
+    name: "Jane Doe",
+    email: "jane@example.com"
+  });
+  
+  await profileService.create({
+    user_id: user.id,
+    bio: "Designer"
+  });
+  
+  await tx.commit();
+  console.log("Transaction committed");
+} catch (error) {
+  await tx.rollback();
+  console.error("Transaction rolled back:", error);
+  throw error;
+}
+
+// Batch operations with transactions
+const users = await userService.createBatch([
+  { name: "User 1", email: "user1@example.com" },
+  { name: "User 2", email: "user2@example.com" }
+]);
+
+const updatedCount = await userService.updateBatch([
+  { filter: { id: 1 }, data: { status: "active" } },
+  { filter: { id: 2 }, data: { status: "inactive" } }
+]);
+
+const deletedCount = await userService.deleteBatch([
+  { status: "spam" },
+  { created_at: { $lt: oldDate } }
+]);
+```
+
+---
+
+## 🔥 Advanced Usage Examples
+
+### 1. Complex Filtering
+
+```typescript
+// Combining multiple operators
+const users = await userService.find({
+  age: { $gte: 18, $lte: 65 },
+  status: { $in: ["active", "pending"] },
+  email: { $like: "%@gmail.com" },
+  created_at: { $between: [startDate, endDate] },
+  $or: [
+    { role: "admin" },
+    { role: "moderator" }
+  ]
+});
+
+// Nested conditions
+const posts = await postService.find({
+  $and: [
+    { status: "published" },
+    {
+      $or: [
+        { author_id: currentUserId },
+        { is_public: true }
+      ]
+    }
+  ]
+});
+```
+
+### 2. Custom Service Methods
+
+```typescript
+class UserService extends BaseService<User> {
+  // Find users with pagination and search
+  async searchUsers(
+    searchTerm: string,
+    page: number = 1,
+    pageSize: number = 20
+  ) {
+    return this.paginate(
+      {
+        $or: [
+          { name: { $like: `%${searchTerm}%` } },
+          { email: { $like: `%${searchTerm}%` } }
+        ],
+        deleted: false
+      },
+      { page, limit: pageSize, sort: { created_at: -1 } }
+    );
+  }
+
+  // Get user statistics
+  async getUserStats() {
+    const [total, active, inactive] = await Promise.all([
+      this.count(),
+      this.count({ is_active: true }),
+      this.count({ is_active: false })
+    ]);
+
+    return { total, active, inactive };
+  }
+
+  // Get users by age range
+  async getUsersByAgeRange(minAge: number, maxAge: number) {
+    return this.find({
+      age: { $gte: minAge, $lte: maxAge },
+      deleted: false
+    });
+  }
+
+  // Deactivate old inactive users
+  async deactivateInactiveUsers(daysSinceLastLogin: number) {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - daysSinceLastLogin);
+
+    return this.update(
+      {
+        last_login_at: { $lt: cutoffDate },
+        is_active: true
+      },
+      { is_active: false }
+    );
+  }
+}
+```
+
+### 3. Relationships and Joins
+
+```typescript
+class OrderService extends BaseService<Order> {
+  // Get orders with user information
+  async getOrdersWithUsers(filter?: QueryFilter) {
+    const orders = await this.find(filter);
+    
+    // Manually join with users
+    const userIds = [...new Set(orders.map(o => o.user_id))];
+    const users = await userService.find({ 
+      id: { $in: userIds } 
+    });
+    
+    const userMap = new Map(users.map(u => [u.id, u]));
+    
+    return orders.map(order => ({
+      ...order,
+      user: userMap.get(order.user_id)
+    }));
+  }
+
+  // Get order summary with aggregation
+  async getOrderSummary(userId: number) {
+    return this.aggregate([
+      { $match: { user_id: userId } },
+      {
+        $group: {
+          _id: "$status",
+          count: { $sum: 1 },
+          totalAmount: { $sum: "$amount" }
+        }
+      }
+    ]);
+  }
+}
+```
+
+### 4. Audit Trail Implementation
+
+```typescript
+interface AuditLog {
+  id: number;
+  entity_name: string;
+  entity_id: number;
+  action: "create" | "update" | "delete";
+  old_data?: string;
+  new_data?: string;
+  user_id?: number;
+  timestamp: Date;
+}
+
+class AuditService extends BaseService<AuditLog> {
+  constructor() {
+    super("myapp", "audit_logs");
+  }
+
+  async logChange(
+    entityName: string,
+    entityId: number,
+    action: "create" | "update" | "delete",
+    oldData?: any,
+    newData?: any,
+    userId?: number
+  ) {
+    await this.create({
+      entity_name: entityName,
+      entity_id: entityId,
+      action,
+      old_data: oldData ? JSON.stringify(oldData) : undefined,
+      new_data: newData ? JSON.stringify(newData) : undefined,
+      user_id: userId,
+      timestamp: new Date()
+    });
+  }
+}
+
+class UserService extends BaseService<User> {
+  private auditService: AuditService;
+
+  setAuditService(service: AuditService) {
+    this.auditService = service;
+  }
+
+  protected async afterCreate(result: User): Promise<User> {
+    await this.auditService?.logChange(
+      "users",
+      result.id,
+      "create",
+      undefined,
+      result
+    );
+    return result;
+  }
+
+  protected async beforeUpdate(
+    filter: QueryFilter,
+    data: Partial<User>
+  ): Promise<Partial<User>> {
+    // Log old data before update
+    const oldRecords = await this.find(filter);
+    for (const old of oldRecords) {
+      await this.auditService?.logChange(
+        "users",
+        old.id,
+        "update",
+        old,
+        { ...old, ...data }
+      );
+    }
+    return data;
+  }
+}
+```
+
+### 5. Caching Layer
+
+```typescript
+class CachedUserService extends BaseService<User> {
+  private cache: Map<string, { data: any; expiry: number }> = new Map();
+  private cacheDuration = 5 * 60 * 1000; // 5 minutes
+
+  private getCacheKey(method: string, params: any): string {
+    return `${method}:${JSON.stringify(params)}`;
+  }
+
+  private getCache(key: string): any | null {
+    const cached = this.cache.get(key);
+    if (cached && cached.expiry > Date.now()) {
+      return cached.data;
+    }
+    this.cache.delete(key);
+    return null;
+  }
+
+  private setCache(key: string, data: any): void {
+    this.cache.set(key, {
+      data,
+      expiry: Date.now() + this.cacheDuration
+    });
+  }
+
+  async findById(id: number): Promise<User | null> {
+    const cacheKey = this.getCacheKey("findById", { id });
+    const cached = this.getCache(cacheKey);
+    if (cached) return cached;
+
+    const result = await super.findById(id);
+    if (result) {
+      this.setCache(cacheKey, result);
+    }
+    return result;
+  }
+
+  protected async afterCreate(result: User): Promise<User> {
+    // Invalidate relevant caches
+    this.cache.clear();
+    return result;
+  }
+
+  protected async afterUpdate(count: number): Promise<void> {
+    // Invalidate caches on update
+    this.cache.clear();
+  }
+}
+```
+
+### 6. Rate Limiting
+
+```typescript
+class RateLimitedUserService extends BaseService<User> {
+  private requestCounts: Map<string, { count: number; resetAt: number }> = new Map();
+  private maxRequests = 100;
+  private windowMs = 60 * 1000; // 1 minute
+
+  private checkRateLimit(userId: string): void {
+    const now = Date.now();
+    const userLimit = this.requestCounts.get(userId);
+
+    if (!userLimit || userLimit.resetAt < now) {
+      this.requestCounts.set(userId, {
+        count: 1,
+        resetAt: now + this.windowMs
+      });
+      return;
+    }
+
+    if (userLimit.count >= this.maxRequests) {
+      throw new Error("Rate limit exceeded. Please try again later.");
+    }
+
+    userLimit.count++;
+  }
+
+  async find(filter?: QueryFilter, options?: QueryOptions): Promise<User[]> {
+    // Assume userId is in context
+    const userId = "current-user-id"; // Get from context
+    this.checkRateLimit(userId);
+    return super.find(filter, options);
+  }
+}
+```
+
+### 7. Multiple Database Connections
 
 ```typescript
 // Register multiple schemas
@@ -456,7 +1092,7 @@ const analyticsService = await ServiceManager.getInstance()
   .getService<AnalyticsService>("analytics_db", "events");
 ```
 
-### 5. Role-Based Database Access
+### 8. Role-Based Database Access
 
 ```typescript
 // Define roles with database access
@@ -481,7 +1117,7 @@ const activeDbs = DatabaseManager.getActiveDatabases("admin");
 console.log("Active databases:", activeDbs);
 ```
 
-### 6. Connection Management
+### 9. Connection Management
 
 ```typescript
 // Get DAO for direct access
@@ -510,7 +1146,7 @@ console.log(status);
 // }
 ```
 
-### 7. Schema Validation
+### 10. Schema Validation
 
 ```typescript
 // Validate schema exists
@@ -532,7 +1168,7 @@ const dao = await DatabaseManager.getDAO("myapp");
 await dao.syncAllTables();
 ```
 
-### 8. Service Manager
+### 11. Service Manager
 
 ```typescript
 const serviceManager = ServiceManager.getInstance();
@@ -576,7 +1212,7 @@ console.log(`Cleaned up ${cleanedCount} unused services`);
 await serviceManager.shutdown();
 ```
 
-### 9. Custom Validation
+### 12. Custom Validation
 
 ```typescript
 class UserService extends BaseService<User> {
@@ -616,7 +1252,7 @@ class UserService extends BaseService<User> {
 }
 ```
 
-### 10. Pagination Helper
+### 13. Pagination Helper
 
 ```typescript
 class UserService extends BaseService<User> {
@@ -658,7 +1294,7 @@ console.log(`Page ${result.page} of ${result.totalPages}`);
 console.log(`Showing ${result.data.length} of ${result.total} users`);
 ```
 
-### 11. Soft Delete Pattern
+### 14. Soft Delete Pattern
 
 ```typescript
 interface User {
@@ -704,7 +1340,7 @@ class UserService extends BaseService<User> {
 }
 ```
 
-### 12. Audit Trail
+### 15. Audit Trail
 
 ```typescript
 interface AuditLog {
