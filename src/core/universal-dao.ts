@@ -29,7 +29,7 @@ export class UniversalDAO<TConnection extends IConnection = IConnection>
   protected adapter: IAdapter<TConnection>;
   protected connection: TConnection | null = null;
   public readonly schema: DatabaseSchema;
-  public readonly databaseType: DatabaseType;
+  public readonly databaseType: DatabaseType = "sqlite";
   public readonly dbConfig: DbConfig;
 
   // Reconnection tracking
@@ -49,7 +49,7 @@ export class UniversalDAO<TConnection extends IConnection = IConnection>
 
     this.adapter = adapter;
     this.schema = schema;
-    this.databaseType = schema.database_type;
+    this.databaseType = schema.database_type || "sqlite";
     this.dbConfig = dbConfig;
   }
 

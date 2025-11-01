@@ -5,18 +5,60 @@
 /**
  * Supported database types
  */
-export type DatabaseType = 'postgresql' | 'mysql' | 'mariadb' | 'sqlite' | 'sqlserver' | 'mongodb' | 'oracle';
+export type DatabaseType =
+  | "postgresql"
+  | "mysql"
+  | "mariadb"
+  | "sqlite"
+  | "sqlserver"
+  | "mongodb"
+  | "oracle";
 
 /**
  * Field types for schema definition
  */
-export type FieldType = 
-  | 'string' | 'text' | 'varchar' | 'char'
-  | 'number' | 'integer' | 'int' | 'bigint' | 'float' | 'double' | 'decimal'
-  | 'boolean' | 'bool'
-  | 'date' | 'datetime' | 'timestamp' | 'time'
-  | 'json' | 'jsonb' | 'array' | 'object'
-  | 'uuid' | 'binary' | 'blob';
+export type FieldType =
+  | "string"
+  | "text"
+  | "varchar"
+  | "char"
+  | "number"
+  | "integer"
+  | "int"
+  | "bigint"
+  | "float"
+  | "double"
+  | "decimal"
+  | "boolean"
+  | "bool"
+  | "date"
+  | "datetime"
+  | "timestamp"
+  | "time"
+  | "json"
+  | "jsonb"
+  | "array"
+  | "object"
+  | "uuid"
+  | "binary"
+  | "blob"
+  | "email"
+  | "objectid"
+  | "url"
+  | "smallint"
+  | "tinyint"
+  | "numeric";
+
+/**
+ *Kiểu mapping csdl với kiểu
+ */
+export interface TypeMappingConfig {
+  type_mapping: {
+    [targetType: string]: {
+      [sourceType: string]: string;
+    };
+  };
+}
 
 /**
  * Field definition in schema
@@ -24,6 +66,9 @@ export type FieldType =
 export interface FieldDefinition {
   name?: string; // Auto-fill from key if not provided
   type: FieldType;
+  option_key?: string;
+  description?: string;
+  constraints?: string;
   required?: boolean;
   nullable?: boolean;
   unique?: boolean;
@@ -41,8 +86,8 @@ export interface FieldDefinition {
   references?: {
     table: string;
     field: string;
-    onDelete?: 'CASCADE' | 'SET NULL' | 'RESTRICT' | 'NO ACTION';
-    onUpdate?: 'CASCADE' | 'SET NULL' | 'RESTRICT' | 'NO ACTION';
+    onDelete?: "CASCADE" | "SET NULL" | "RESTRICT" | "NO ACTION";
+    onUpdate?: "CASCADE" | "SET NULL" | "RESTRICT" | "NO ACTION";
   };
 }
 
@@ -57,36 +102,54 @@ export interface SchemaDefinition {
  * Entity schema definition (for DatabaseSchema)
  */
 export interface EntitySchemaDefinition {
-  name: string; // Table/Collection name
+  name?: string; // Table/Collection name Same key
   cols: FieldDefinition[]; // Columns/Fields
   indexes?: IndexDefinition[];
-  foreignKeys?: ForeignKeyDefinition[];
+  foreign_keys?: ForeignKeyDefinition[]; // chấp nhận cả kiểu snail
+  foreignKeys?: ForeignKeyDefinition[]; // chấp nhận cả kiểu lamp
   options?: TableOptions;
+  description?: string;
 }
 
 /**
  * Index definition
  */
-export interface IndexDefinition {
+interface IndexDefinitionBase {
   name: string;
-  fields: string[];
   unique?: boolean;
-  type?: 'BTREE' | 'HASH' | 'GIST' | 'GIN';
+  type?: "BTREE" | "HASH" | "GIST" | "GIN";
+  description?: string;
 }
+
+export type IndexDefinition = IndexDefinitionBase &
+  (
+    | { fields: string[]; columns?: never }
+    | { fields?: never; columns: string[] }
+  );
 
 /**
  * Foreign key definition
  */
-export interface ForeignKeyDefinition {
-  name: string;
-  fields: string[];
-  references: {
-    table: string;
-    fields: string[];
-  };
-  onDelete?: 'CASCADE' | 'SET NULL' | 'RESTRICT' | 'NO ACTION';
-  onUpdate?: 'CASCADE' | 'SET NULL' | 'RESTRICT' | 'NO ACTION';
+interface ReferencesBase {
+  table: string;
 }
+type References = ReferencesBase &
+  ({ field: string; fields?: never } | { field?: never; fields: string[] });
+
+// Định nghĩa base cho ForeignKeyDefinition
+interface ForeignKeyDefinitionBase {
+  name: string;
+  references: References;
+  onDelete?: "CASCADE" | "SET NULL" | "RESTRICT" | "NO ACTION";
+  onUpdate?: "CASCADE" | "SET NULL" | "RESTRICT" | "NO ACTION";
+  on_delete?: "CASCADE" | "SET NULL" | "RESTRICT" | "NO ACTION";
+  on_update?: "CASCADE" | "SET NULL" | "RESTRICT" | "NO ACTION";
+  description?: string;
+}
+
+// Ràng buộc ForeignKeyDefinition phải có ít nhất field hoặc fields
+export type ForeignKeyDefinition = ForeignKeyDefinitionBase &
+  ({ field: string; fields?: never } | { field?: never; fields: string[] });
 
 /**
  * Table options
@@ -103,29 +166,44 @@ export interface TableOptions {
  */
 export interface DatabaseSchema {
   version: string;
-  database_type: DatabaseType;
+  database_type?: DatabaseType;
   database_name: string;
   schemas: Record<string, EntitySchemaDefinition>;
-  type_mapping?: Record<string, string>;
+  type_mapping?: TypeMappingConfig["type_mapping"];
   description?: string;
 }
 
 /**
  * Query operators
  */
-export type QueryOperator = 
-  | '$eq' | '$ne' | '$gt' | '$gte' | '$lt' | '$lte' 
-  | '$in' | '$nin' | '$like' | '$ilike' | '$regex' 
-  | '$and' | '$or' | '$not' | '$exists'
-  | '$between' | '$notBetween';
+export type QueryOperator =
+  | "$eq"
+  | "$ne"
+  | "$gt"
+  | "$gte"
+  | "$lt"
+  | "$lte"
+  | "$in"
+  | "$nin"
+  | "$like"
+  | "$ilike"
+  | "$regex"
+  | "$and"
+  | "$or"
+  | "$not"
+  | "$exists"
+  | "$between"
+  | "$notBetween";
 
 /**
  * Query filter
  */
 export type QueryFilter<T = any> = {
-  [K in keyof T]?: T[K] | {
-    [Op in QueryOperator]?: any;
-  };
+  [K in keyof T]?:
+    | T[K]
+    | {
+        [Op in QueryOperator]?: any;
+      };
 } & {
   $and?: QueryFilter<T>[];
   $or?: QueryFilter<T>[];
@@ -135,12 +213,12 @@ export type QueryFilter<T = any> = {
 /**
  * Sort direction
  */
-export type SortDirection = 1 | -1 | 'ASC' | 'DESC';
+export type SortDirection = 1 | -1 | "ASC" | "DESC";
 
 /**
  * Join type
  */
-export type JoinType = 'INNER' | 'LEFT' | 'RIGHT' | 'FULL' | 'CROSS';
+export type JoinType = "INNER" | "LEFT" | "RIGHT" | "FULL" | "CROSS";
 
 /**
  * Join clause
