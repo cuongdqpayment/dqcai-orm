@@ -8,7 +8,6 @@ import {
   QueryFilter,
 } from "@dqcai/orm";
 
-
 // import { createModuleLogger, APPModules } from "../logger";
 // const logger = createModuleLogger(APPModules.TEST_ORM);
 
@@ -220,15 +219,16 @@ class UserService extends BaseService<User> {
       );
     }
 
-    const existingEmail = await this.findByEmail(data.email);
-    if (existingEmail) {
-      throw new Error("Email already exists");
-    }
+    // điều kiện trùng email và username sẽ được xử lý trong upsert rồi nhé
+    // const existingEmail = await this.findByEmail(data.email);
+    // if (existingEmail) {
+    //   throw new Error("Email already exists");
+    // }
 
-    const existingUsername = await this.findByUsername(data.username);
-    if (existingUsername) {
-      throw new Error("Username already exists");
-    }
+    // const existingUsername = await this.findByUsername(data.username);
+    // if (existingUsername) {
+    //   throw new Error("Username already exists");
+    // }
 
     return data;
   }
@@ -438,7 +438,8 @@ async function initializeDatabase() {
   await DatabaseManager.getDAO("blog_app_mongo");
   console.log("✓ DAO created with shared adapter");
 
-  const registeredAdapter = DatabaseManager.getAdapterInstance("blog_app_mongo");
+  const registeredAdapter =
+    DatabaseManager.getAdapterInstance("blog_app_mongo");
   console.log("✓ Adapter verification:", registeredAdapter === adapter);
 
   console.log("\n📋 Creating collections...");
@@ -507,12 +508,17 @@ async function initializeDatabase() {
   );
 
   try {
-    await userService.create({
-      username: "test_init",
-      email: "test@init.com",
-      password_hash: "test_hash",
-      full_name: "Test Init User",
-    });
+    await userService.upsert(
+      {
+        email: "test@init.com",
+      },
+      {
+        username: "test_init",
+        email: "test@init.com",
+        password_hash: "test_hash",
+        full_name: "Test Init User",
+      }
+    );
     console.log("✓ Services can access the same database\n");
   } catch (error) {
     console.log("ℹ Test user creation:", (error as Error).message, "\n");
@@ -532,13 +538,16 @@ async function example1_BasicCRUD() {
       "users"
     );
 
-  const user = await userService.create({
-    username: "johndoe",
-    email: "john@example.com",
-    password_hash: "hashed_password_here",
-    full_name: "John Doe",
-    bio: "Software developer and blogger",
-  });
+  const user = await userService.upsert(
+    { email: "john@example.com" },
+    {
+      username: "johndoe",
+      email: "john@example.com",
+      password_hash: "hashed_password_here",
+      full_name: "John Doe",
+      bio: "Software developer and blogger",
+    }
+  );
   console.log("Created user:", user.username);
 
   const foundUser = await userService.findByEmail("john@example.com");

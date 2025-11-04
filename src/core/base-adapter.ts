@@ -102,7 +102,7 @@ export abstract class BaseAdapter implements IAdapter {
       await this.connection.close();
       logger.info("Connection closed successfully", { type: this.type });
     } catch (error: any) {
-      logger.warn("Error during disconnect (might be already closed)", {
+      logger.info("Error during disconnect (might be already closed)", {
         type: this.type,
         error: error.message,
       });
