@@ -11,13 +11,14 @@ import {
   IndexDefinition,
   BulkOperation,
   Transaction,
-} from "../types/orm.types";
-import { IDAO } from "../interfaces/dao.interface";
-import { IAdapter } from "../interfaces/adapter.interface";
-import { DatabaseSchema, DatabaseType, DbConfig } from "../types/orm.types";
-import { ServiceStatus } from "../types/service.types";
+  ForeignKeyDefinition,
+} from "@/types/orm.types";
+import { IDAO } from "@/interfaces/dao.interface";
+import { IAdapter } from "@/interfaces/adapter.interface";
+import { DatabaseSchema, DatabaseType, DbConfig } from "@/types/orm.types";
+import { ServiceStatus } from "@/types/service.types";
 
-import { createModuleLogger, ORMModules } from "../logger";
+import { createModuleLogger, ORMModules } from "@/logger";
 const logger = createModuleLogger(ORMModules.UNIVERSAL_DAO);
 
 /**
@@ -257,12 +258,12 @@ export class UniversalDAO<TConnection extends IConnection = IConnection>
    */
   async upsert<T = any>(
     entityName: string,
-    filter: QueryFilter,
-    data: Partial<T>
+    data: Partial<T>,
+    filter?: QueryFilter
   ): Promise<T> {
     logger.debug("Performing upsert", { entityName });
     await this.ensureConnected();
-    return this.adapter.upsert(entityName, filter, data) as Promise<T>;
+    return this.adapter.upsert(entityName, data, filter) as Promise<T>;
   }
 
   /**
@@ -327,15 +328,19 @@ export class UniversalDAO<TConnection extends IConnection = IConnection>
 
   /**
    * Tạo table/collection
+   * @param entityName
+   * @param schema
    */
   async createTable(
     entityName: string,
     schema?: SchemaDefinition
   ): Promise<void> {
-    logger.debug("Creating table", { entityName });
+    logger.debug("Creating table with full schema", { entityName });
     await this.ensureConnected();
 
     let schemaDefinition: SchemaDefinition = schema || {};
+    let indexes: IndexDefinition[] = [];
+    let foreignKeys: ForeignKeyDefinition[] = [];
 
     if (!schema) {
       const entitySchema = this.schema.schemas[entityName];
@@ -343,14 +348,103 @@ export class UniversalDAO<TConnection extends IConnection = IConnection>
         throw new Error(`Entity '${entityName}' not found in schema`);
       }
 
+      // ✅ Build SchemaDefinition from cols
       for (const col of entitySchema.cols) {
         const fieldName = col.name || "";
         if (fieldName) {
           schemaDefinition[fieldName] = col;
         }
       }
+
+      // ✅ Extract indexes from schema
+      if (entitySchema.indexes && entitySchema.indexes.length > 0) {
+        indexes = entitySchema.indexes.map((idx) => ({
+          name: idx.name,
+          fields: idx.fields,
+          unique: idx.unique || false,
+        }));
+      }
+
+      // ✅ Extract foreign keys from schema
+      if (entitySchema.foreign_keys && entitySchema.foreign_keys.length > 0) {
+        foreignKeys = entitySchema.foreign_keys.map((fk) => ({
+          name: fk.name,
+          fields: fk.fields,
+          references: { ...fk.references },
+          on_delete: fk.on_delete || "NO ACTION",
+          on_update: fk.on_update || "NO ACTION",
+        }));
+      }
     }
+
+    // ✅ 1. Tạo table với columns
     await this.adapter.createTable(entityName, schemaDefinition);
+    logger.info("Table structure created", { entityName });
+
+    // ✅ 2. Tạo indexes (nếu có)
+    if (indexes.length > 0) {
+      logger.info("Creating indexes", { entityName, count: indexes.length });
+      for (const indexDef of indexes) {
+        try {
+          await this.adapter.createIndex(entityName, indexDef);
+          logger.debug("Index created successfully", {
+            entityName,
+            indexName: indexDef.name,
+          });
+        } catch (error) {
+          logger.error("Failed to create index", {
+            entityName,
+            indexName: indexDef.name,
+            error: (error as Error).message,
+          });
+          // Không throw, tiếp tục tạo các index khác
+        }
+      }
+    }
+
+    // ✅ 3. Tạo foreign keys (nếu có và adapter hỗ trợ)
+    if (foreignKeys.length > 0) {
+      logger.info("Creating foreign keys", {
+        entityName,
+        count: foreignKeys.length,
+      });
+
+      for (const fkDef of foreignKeys) {
+        try {
+          // ⚠️ SQLite không hỗ trợ ALTER TABLE ADD FOREIGN KEY
+          // Foreign keys phải được định nghĩa trong CREATE TABLE
+          if (this.databaseType === "sqlite") {
+            logger.warn(
+              "SQLite foreign keys must be defined during table creation",
+              {
+                entityName,
+                foreignKeyName: fkDef.name,
+              }
+            );
+            continue;
+          }
+
+          await this.adapter.createForeignKey(entityName, fkDef);
+          logger.debug("Foreign key created successfully", {
+            entityName,
+            foreignKeyName: fkDef.name,
+          });
+        } catch (error) {
+          logger.error("Failed to create foreign key", {
+            entityName,
+            foreignKeyName: fkDef.name,
+            error: (error as Error).message,
+          });
+          // Không throw, tiếp tục tạo các foreign key khác
+        }
+      }
+    }
+
+    logger.info("Table created with full schema", {
+      entityName,
+      indexCount: indexes.length,
+      foreignKeyCount: foreignKeys.length,
+    });
   }
 
   /**
@@ -404,33 +498,31 @@ export class UniversalDAO<TConnection extends IConnection = IConnection>
   /**
    * Sync tất cả tables/collections từ schema
    */
+
   async syncAllTables(): Promise<void> {
-    logger.info("Syncing all tables", {
+    logger.info("Syncing all tables with dependencies", {
       databaseName: this.schema.database_name,
       tableCount: Object.keys(this.schema.schemas).length,
     });
 
     await this.ensureConnected();
 
-    for (const [entityName, entitySchema] of Object.entries(
-      this.schema.schemas
-    )) {
+    // ✅ 1. Tạo danh sách tables theo thứ tự dependency
+    const tableOrder = this.resolveDependencyOrder();
+
+    // ✅ 2. Tạo tables theo thứ tự
+    for (const entityName of tableOrder) {
       const exists = await this.adapter.tableExists(entityName);
 
       if (!exists) {
-        logger.info("Creating table/collection", { entityName });
-        const schemaDefinition: any = {};
-        for (const col of entitySchema.cols) {
-          const fieldName = col.name || "";
-          if (fieldName) {
-            schemaDefinition[fieldName] = col;
-          }
-        }
-        await this.adapter.createTable(entityName, schemaDefinition);
+        logger.info("Creating table with full schema", { entityName });
+        await this.createTable(entityName);
       } else {
         logger.debug("Table already exists", { entityName });
       }
     }
+
+    logger.info("All tables synced successfully");
   }
 
   // ==================== 🆕 INDEX MANAGEMENT ====================
@@ -456,6 +548,47 @@ export class UniversalDAO<TConnection extends IConnection = IConnection>
     await this.adapter.dropIndex(entityName, indexName);
   }
 
+  /**
+   * ✅ Giải quyết thứ tự tạo tables dựa trên foreign key dependencies
+   */
+  private resolveDependencyOrder(): string[] {
+    const schemas = this.schema.schemas;
+    const visited = new Set<string>();
+    const order: string[] = [];
+    const visiting = new Set<string>();
+
+    const visit = (entityName: string) => {
+      if (visited.has(entityName)) return;
+      if (visiting.has(entityName)) {
+        logger.warn("Circular dependency detected", { entityName });
+        return;
+      }
+
+      visiting.add(entityName);
+
+      const entitySchema = schemas[entityName];
+      if (entitySchema?.foreign_keys) {
+        for (const fk of entitySchema.foreign_keys) {
+          const refTable = fk.references.table;
+          if (schemas[refTable] && !visited.has(refTable)) {
+            visit(refTable);
+          }
+        }
+      }
+
+      visiting.delete(entityName);
+      visited.add(entityName);
+      order.push(entityName);
+    };
+
+    // Visit tất cả entities
+    for (const entityName of Object.keys(schemas)) {
+      visit(entityName);
+    }
+
+    logger.debug("Resolved dependency order", { order });
+    return order;
+  }
   // ==================== 🆕 TRANSACTION MANAGEMENT ====================
 
   /**

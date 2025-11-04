@@ -6,7 +6,10 @@ import { BaseAdapter } from "../core/base-adapter";
 import {
   DatabaseType,
   EntitySchemaDefinition,
+  ForeignKeyDefinition,
+  ForeignKeyInfo,
   IConnection,
+  IndexDefinition,
   QueryFilter,
   QueryOptions,
   SchemaDefinition,
@@ -114,7 +117,7 @@ export class MongoDBAdapter extends BaseAdapter {
       throw new Error(`MongoDB connection failed: ${error}`);
     }
   }
-  
+
   // ==========================================
   // ✅ SANITIZATION (LEARNED FROM @dqcai/mongo)
   // ==========================================
@@ -327,6 +330,175 @@ export class MongoDBAdapter extends BaseAdapter {
     logger.info("Collection dropped successfully", { collectionName });
   }
 
+  // ========================================
+  // MONGODB ADAPTER - DDL Methods
+  // ========================================
+  // MongoDB là NoSQL, không có DDL truyền thống như SQL
+  // Tuy nhiên vẫn cần implement interface để tương thích
+
+  async createIndex(
+    tableName: string,
+    indexDef: IndexDefinition
+  ): Promise<void> {
+    logger.info("Creating index (MongoDB)", {
+      collection: tableName,
+      indexName: indexDef.name,
+    });
+    this.ensureConnected();
+
+    const collection = this.db.collection(tableName);
+    if (!collection) {
+      throw new Error("Collection not found");
+    }
+
+    const indexSpec: any = {};
+    for (const field of indexDef.fields) {
+      indexSpec[field] = 1; // 1 for ascending, -1 for descending
+    }
+
+    const options: any = {
+      unique: indexDef.unique || false,
+    };
+
+    if (indexDef.name) {
+      options.name = indexDef.name;
+    }
+
+    if (indexDef.type) {
+      // MongoDB index types: text, 2d, 2dsphere, hashed
+      if (indexDef.type === "TEXT") {
+        for (const field of indexDef.fields) {
+          indexSpec[field] = "text";
+        }
+      } else if (indexDef.type === "HASH") {
+        for (const field of indexDef.fields) {
+          indexSpec[field] = "hashed";
+        }
+      }
+    }
+
+    await collection.createIndex(indexSpec, options);
+    logger.info("Index created successfully (MongoDB)", {
+      collection: tableName,
+      indexName: indexDef.name,
+    });
+  }
+
+  async dropIndex(tableName: string, indexName: string): Promise<void> {
+    logger.info("Dropping index (MongoDB)", {
+      collection: tableName,
+      indexName,
+    });
+    this.ensureConnected();
+
+    const collection = this.db.collection(tableName);
+    if (!collection) {
+      throw new Error("Collection not found");
+    }
+
+    await collection.dropIndex(indexName);
+    logger.info("Index dropped successfully (MongoDB)", {
+      collection: tableName,
+      indexName,
+    });
+  }
+
+  async createForeignKey(
+    tableName: string,
+    foreignKeyDef: ForeignKeyDefinition
+  ): Promise<void> {
+    logger.warn("MongoDB does not support foreign keys natively", {
+      collection: tableName,
+    });
+
+    // MongoDB không hỗ trợ foreign key constraints
+    // Có thể implement bằng application-level validation hoặc $lookup
+    throw new Error(
+      "MongoDB does not support foreign key constraints. Use application-level validation or $lookup for references."
+    );
+  }
+
+  async dropForeignKey(
+    tableName: string,
+    foreignKeyName: string
+  ): Promise<void> {
+    logger.warn("MongoDB does not support foreign keys", {
+      collection: tableName,
+    });
+    throw new Error("MongoDB does not support foreign key constraints.");
+  }
+
+  async getForeignKeys(tableName: string): Promise<ForeignKeyInfo[]> {
+    logger.trace("Getting foreign keys (MongoDB)", { collection: tableName });
+
+    // MongoDB không có foreign keys
+    return [];
+  }
+
+  async alterTable(
+    tableName: string,
+    changes: SchemaDefinition
+  ): Promise<void> {
+    logger.info("Altering collection schema (MongoDB)", {
+      collection: tableName,
+    });
+    this.ensureConnected();
+
+    // MongoDB là schema-less, nhưng có thể sử dụng validation rules
+    const collection = this.db.collection(tableName);
+    if (!collection) {
+      throw new Error("Collection not found");
+    }
+
+    // Tạo validation schema từ changes
+    const validator: any = {
+      $jsonSchema: {
+        bsonType: "object",
+        properties: {},
+      },
+    };
+
+    for (const [fieldName, fieldDef] of Object.entries(changes)) {
+      const fieldSchema: any = {
+        bsonType: this.mapFieldTypeToMongoType(fieldDef.type),
+      };
+
+      if (fieldDef.required) {
+        validator.$jsonSchema.required = validator.$jsonSchema.required || [];
+        validator.$jsonSchema.required.push(fieldName);
+      }
+
+      validator.$jsonSchema.properties[fieldName] = fieldSchema;
+    }
+
+    // Update collection validation
+    await this.db.command({
+      collMod: tableName,
+      validator: validator,
+      validationLevel: "moderate",
+    });
+
+    logger.info("Collection schema updated successfully (MongoDB)", {
+      collection: tableName,
+    });
+  }
+
+  private mapFieldTypeToMongoType(fieldType: string): string {
+    const typeMap: { [key: string]: string } = {
+      string: "string",
+      number: "number",
+      integer: "int",
+      boolean: "bool",
+      date: "date",
+      datetime: "date",
+      timestamp: "date",
+      text: "string",
+      json: "object",
+      array: "array",
+    };
+
+    return typeMap[fieldType.toLowerCase()] || "string";
+  }
   // ==========================================
   // ✅ CRUD OPERATIONS (MONGODB-SPECIFIC)
   // ==========================================

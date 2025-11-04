@@ -2,13 +2,13 @@
 // src/core/database-factory.ts (ENHANCED ADAPTER MANAGEMENT)
 // ========================
 
-import { DatabaseType, DbConfig, DatabaseSchema } from "../types/orm.types";
+import { DatabaseType, DbConfig, DatabaseSchema } from "@/types/orm.types";
 import { UniversalDAO } from "./universal-dao";
-import { IAdapter } from "../interfaces/adapter.interface";
-import { DbFactoryOptions } from "../types/service.types";
-import { IConnection } from "../types/orm.types";
+import { IAdapter } from "@/interfaces/adapter.interface";
+import { DbFactoryOptions } from "@/types/service.types";
+import { IConnection } from "@/types/orm.types";
 
-import { createModuleLogger, ORMModules } from "../logger";
+import { createModuleLogger, ORMModules } from "@/logger";
 const logger = createModuleLogger(ORMModules.DATABASE_FACTORY);
 
 /**

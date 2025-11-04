@@ -7,6 +7,8 @@ import {
   DatabaseType,
   DbConfig,
   EntitySchemaDefinition,
+  ForeignKeyDefinition,
+  ForeignKeyInfo,
   IConnection,
   IndexDefinition,
   IResult,
@@ -14,7 +16,7 @@ import {
   QueryOptions,
   SchemaDefinition,
   Transaction,
-} from "../types/orm.types";
+} from "@/types/orm.types";
 
 /**
  * Database Adapter Interface
@@ -32,7 +34,11 @@ export interface IAdapter<TConnection extends IConnection = IConnection> {
   getConnection(): TConnection | null;
 
   // Schema Management
-  createTable(tableName: string, schema: SchemaDefinition): Promise<void>;
+  createTable(
+    tableName: string,
+    schema: SchemaDefinition,
+    foreignKeys?: ForeignKeyDefinition[]
+  ): Promise<void>;
   alterTable(tableName: string, changes: SchemaDefinition): Promise<void>;
   dropTable(tableName: string): Promise<void>;
   truncateTable(tableName: string): Promise<void>;
@@ -42,6 +48,14 @@ export interface IAdapter<TConnection extends IConnection = IConnection> {
   // Index Management
   createIndex(tableName: string, indexDef: IndexDefinition): Promise<void>;
   dropIndex(tableName: string, indexName: string): Promise<void>;
+
+  // Foreign Key Management
+  createForeignKey(
+    tableName: string,
+    foreignKeyDef: ForeignKeyDefinition
+  ): Promise<void>;
+  dropForeignKey(tableName: string, foreignKeyName: string): Promise<void>;
+  getForeignKeys(tableName: string): Promise<ForeignKeyInfo[]>;
 
   // CRUD Operations
   insertOne(tableName: string, data: any): Promise<any>;
@@ -66,7 +80,7 @@ export interface IAdapter<TConnection extends IConnection = IConnection> {
     data: any
   ): Promise<boolean>;
   updateById(tableName: string, id: any, data: any): Promise<boolean>;
-  upsert(tableName: string, filter: QueryFilter, data: any): Promise<any>;
+  upsert(tableName: string, data: any, filter?: QueryFilter): Promise<any>;
 
   delete(tableName: string, filter: QueryFilter): Promise<number>;
   deleteOne(tableName: string, filter: QueryFilter): Promise<boolean>;

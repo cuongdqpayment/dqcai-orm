@@ -7,8 +7,8 @@ import {
   IResult,
   QueryFilter,
   QueryOptions,
-} from "../types/orm.types";
-import { ServiceStatus } from "../types/service.types";
+} from "@/types/orm.types";
+import { ServiceStatus } from "@/types/service.types";
 
 /**
  * Data Access Object Interface

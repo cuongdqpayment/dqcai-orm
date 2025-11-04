@@ -6,7 +6,11 @@ import { BaseAdapter } from "../core/base-adapter";
 import {
   DatabaseType,
   EntitySchemaDefinition,
+  ForeignKeyDefinition,
+  ForeignKeyInfo,
   IConnection,
+  IndexDefinition,
+  SchemaDefinition,
 } from "../types/orm.types";
 import { QueryHelper } from "../utils/query-helper";
 import { createModuleLogger, ORMModules } from "../logger";
@@ -283,29 +287,6 @@ export class SQLiteAdapter extends BaseAdapter {
       ? params.map((p) => this.sanitizeValue(p))
       : undefined;
 
-    /* if (query.trim().toUpperCase().startsWith("SELECT")) {
-      logger.trace("Executing SELECT query");
-      const rows = this.db.prepare(query).all(sanitizedParams);
-      const result = { rows, rowCount: rows.length };
-      logger.trace("SELECT query executed", { rowCount: rows.length });
-      return result;
-    } else {
-      logger.trace("Executing non-SELECT query");
-      const info = this.db.prepare(query).run(sanitizedParams);
-      const result = {
-        rows: [],
-        rowCount: info.changes,
-        rowsAffected: info.changes,
-        lastInsertId: info.lastInsertRowid,
-        lastInsertRowid: info.lastInsertRowid,
-      };
-      logger.trace("Non-SELECT query executed", {
-        changes: info.changes,
-        lastInsertRowid: info.lastInsertRowid,
-      });
-      return result;
-    } */
-
     try {
       const isSelect = query.trim().toUpperCase().startsWith("SELECT");
 
@@ -389,6 +370,163 @@ export class SQLiteAdapter extends BaseAdapter {
     const autoIncrementColumn = `${name} INTEGER PRIMARY KEY AUTOINCREMENT`;
     logger.trace("Auto-increment column built", { autoIncrementColumn });
     return autoIncrementColumn;
+  }
+
+  // ==========================================
+  // OVERRIDE DLL methodes
+  // ==========================================
+
+  // Trong file: sqlite-adapter.ts
+  // Override createTable để xử lý foreign keys đúng cách cho SQLite
+
+  async createTable(
+    tableName: string,
+    schema: SchemaDefinition,
+    foreignKeys?: ForeignKeyDefinition[]
+  ): Promise<void> {
+    logger.debug("Creating SQLite table with foreign keys", { tableName });
+
+    this.ensureConnected();
+
+    // ⚠️ Bật PRAGMA foreign_keys cho SQLite
+    await this.executeRaw("PRAGMA foreign_keys = ON", []);
+
+    const columns: string[] = [];
+
+    for (const [fieldName, fieldDef] of Object.entries(schema)) {
+      const columnDef = this.buildColumnDefinition(fieldName, fieldDef);
+      columns.push(columnDef);
+    }
+
+    // ✅ Build inline foreign key constraints
+    const constraints = this.buildInlineConstraints(schema, foreignKeys);
+    const allColumns = [...columns, ...constraints].join(", ");
+
+    const query = this.buildCreateTableQuery(tableName, allColumns);
+
+    await this.executeRaw(query, []);
+
+    logger.info("SQLite table created with foreign keys", {
+      tableName,
+      foreignKeyCount: constraints.length,
+    });
+  }
+
+  async createIndex(
+    tableName: string,
+    indexDef: IndexDefinition
+  ): Promise<void> {
+    logger.info("Creating index (SQLite)", {
+      tableName,
+      indexName: indexDef.name,
+    });
+    this.ensureConnected();
+
+    const indexName =
+      indexDef.name || `idx_${tableName}_${indexDef.fields.join("_")}`;
+    const unique = indexDef.unique ? "UNIQUE " : "";
+    const fields = indexDef.fields
+      .map((f) => QueryHelper.quoteIdentifier(f, this.type))
+      .join(", ");
+
+    const query = `CREATE ${unique}INDEX IF NOT EXISTS ${QueryHelper.quoteIdentifier(
+      indexName,
+      this.type
+    )} ON ${QueryHelper.quoteIdentifier(tableName, this.type)} (${fields})`;
+
+    await this.executeRaw(query, []);
+    logger.info("Index created successfully (SQLite)", {
+      tableName,
+      indexName,
+    });
+  }
+
+  async dropIndex(tableName: string, indexName: string): Promise<void> {
+    logger.info("Dropping index (SQLite)", { tableName, indexName });
+    this.ensureConnected();
+
+    const query = `DROP INDEX IF EXISTS ${QueryHelper.quoteIdentifier(
+      indexName,
+      this.type
+    )}`;
+    await this.executeRaw(query, []);
+    logger.info("Index dropped successfully (SQLite)", {
+      tableName,
+      indexName,
+    });
+  }
+
+  async createForeignKey(
+    tableName: string,
+    foreignKeyDef: ForeignKeyDefinition
+  ): Promise<void> {
+    logger.warn(
+      "SQLite does not support adding foreign keys to existing tables",
+      { tableName }
+    );
+    throw new Error(
+      "SQLite does not support ALTER TABLE ADD FOREIGN KEY. Foreign keys must be defined during table creation."
+    );
+  }
+
+  async dropForeignKey(
+    tableName: string,
+    foreignKeyName: string
+  ): Promise<void> {
+    logger.warn("SQLite does not support dropping foreign keys", { tableName });
+    throw new Error(
+      "SQLite does not support ALTER TABLE DROP FOREIGN KEY. You need to recreate the table."
+    );
+  }
+
+  async getForeignKeys(tableName: string): Promise<ForeignKeyInfo[]> {
+    logger.trace("Getting foreign keys (SQLite)", { tableName });
+    this.ensureConnected();
+
+    const query = `PRAGMA foreign_key_list(${QueryHelper.quoteIdentifier(
+      tableName,
+      this.type
+    )})`;
+    const result = await this.executeRaw(query, []);
+
+    return (result.rows || []).map((row: any) => ({
+      constraintName: `fk_${tableName}_${row.from}`,
+      columnName: row.from,
+      referencedTable: row.table,
+      referencedColumn: row.to,
+      onDelete: row.on_delete || "NO ACTION",
+      onUpdate: row.on_update || "NO ACTION",
+    }));
+  }
+
+  async alterTable(
+    tableName: string,
+    changes: SchemaDefinition
+  ): Promise<void> {
+    logger.warn("SQLite has limited ALTER TABLE support", { tableName });
+
+    // SQLite chỉ hỗ trợ ADD COLUMN và RENAME
+    for (const [fieldName, fieldDef] of Object.entries(changes)) {
+      const columnDef = this.buildColumnDefinition(fieldName, fieldDef);
+      const query = `ALTER TABLE ${QueryHelper.quoteIdentifier(
+        tableName,
+        this.type
+      )} ADD COLUMN ${columnDef}`;
+
+      try {
+        await this.executeRaw(query, []);
+        logger.info("Column added successfully (SQLite)", {
+          tableName,
+          fieldName,
+        });
+      } catch (error: any) {
+        logger.error("Failed to alter table (SQLite)", {
+          tableName,
+          error: error.message,
+        });
+        throw error;
+      }
+    }
   }
 
   // ==========================================

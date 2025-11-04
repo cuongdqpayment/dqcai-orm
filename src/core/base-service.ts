@@ -4,17 +4,17 @@
 
 import { UniversalDAO } from "./universal-dao";
 import { DatabaseManager } from "./database-manager";
-import { 
-  IResult, 
-  QueryFilter, 
-  QueryOptions, 
+import {
+  IResult,
+  QueryFilter,
+  QueryOptions,
   Transaction,
   SchemaDefinition,
   IndexDefinition,
-  BulkOperation
-} from "../types/orm.types";
-import { ServiceStatus } from "../types/service.types";
-import { createModuleLogger, ORMModules } from "../logger";
+  BulkOperation,
+} from "@/types/orm.types";
+import { ServiceStatus } from "@/types/service.types";
+import { createModuleLogger, ORMModules } from "@/logger";
 const logger = createModuleLogger(ORMModules.BASE_SERVICE);
 
 /**
@@ -33,7 +33,7 @@ export abstract class BaseService<TModel = any> {
 
     logger.debug("Creating BaseService instance", {
       schemaKey: this.schemaKey,
-      entityName: this.entityName
+      entityName: this.entityName,
     });
   }
 
@@ -45,7 +45,9 @@ export abstract class BaseService<TModel = any> {
     logger.info("Initializing service with adapter sharing", {
       schemaKey: this.schemaKey,
       entityName: this.entityName,
-      hasRegisteredAdapter: !!DatabaseManager.getAdapterInstance(this.schemaKey)
+      hasRegisteredAdapter: !!DatabaseManager.getAdapterInstance(
+        this.schemaKey
+      ),
     });
 
     if (this.dao && this.dao.getAdapter().isConnected()) {
@@ -106,7 +108,10 @@ export abstract class BaseService<TModel = any> {
     return this.getDAO();
   }
 
-  public async executeRaw(query: string | any, params?: any[]): Promise<IResult> {
+  public async executeRaw(
+    query: string | any,
+    params?: any[]
+  ): Promise<IResult> {
     await this.ensureInitialized();
     this.lastAccess = Date.now();
     return this.getDAO().execute(query, params);
@@ -123,14 +128,20 @@ export abstract class BaseService<TModel = any> {
 
   // ==================== BASIC CRUD OPERATIONS ====================
 
-  public async find(query: QueryFilter = {}, options?: QueryOptions): Promise<TModel[]> {
+  public async find(
+    query: QueryFilter = {},
+    options?: QueryOptions
+  ): Promise<TModel[]> {
     logger.trace("Finding records", { entityName: this.entityName });
     await this.ensureInitialized();
     this.lastAccess = Date.now();
     return this.getDAO().find<TModel>(this.entityName, query, options);
   }
 
-  public async findOne(query: QueryFilter, options?: QueryOptions): Promise<TModel | null> {
+  public async findOne(
+    query: QueryFilter,
+    options?: QueryOptions
+  ): Promise<TModel | null> {
     logger.trace("Finding one record", { entityName: this.entityName });
     await this.ensureInitialized();
     this.lastAccess = Date.now();
@@ -149,31 +160,52 @@ export abstract class BaseService<TModel = any> {
     await this.ensureInitialized();
     this.lastAccess = Date.now();
     const processedData = await this.beforeCreate(data);
-    const result = await this.getDAO().insert<TModel>(this.entityName, processedData);
+    const result = await this.getDAO().insert<TModel>(
+      this.entityName,
+      processedData
+    );
     return this.afterCreate(result);
   }
 
   public async createMany(data: Partial<TModel>[]): Promise<TModel[]> {
-    logger.debug("Creating many records", { entityName: this.entityName, count: data.length });
+    logger.debug("Creating many records", {
+      entityName: this.entityName,
+      count: data.length,
+    });
     await this.ensureInitialized();
     this.lastAccess = Date.now();
-    
-    const processedData = await Promise.all(data.map((item) => this.beforeCreate(item)));
-    const results = await this.getDAO().insertMany<TModel>(this.entityName, processedData);
+
+    const processedData = await Promise.all(
+      data.map((item) => this.beforeCreate(item))
+    );
+    const results = await this.getDAO().insertMany<TModel>(
+      this.entityName,
+      processedData
+    );
     return Promise.all(results.map((result) => this.afterCreate(result)));
   }
 
-  public async update(filter: QueryFilter, data: Partial<TModel>): Promise<number> {
+  public async update(
+    filter: QueryFilter,
+    data: Partial<TModel>
+  ): Promise<number> {
     logger.debug("Updating records", { entityName: this.entityName });
     await this.ensureInitialized();
     this.lastAccess = Date.now();
     const processedData = await this.beforeUpdate(filter, data);
-    const count = await this.getDAO().update(this.entityName, filter, processedData);
+    const count = await this.getDAO().update(
+      this.entityName,
+      filter,
+      processedData
+    );
     await this.afterUpdate(count);
     return count;
   }
 
-  public async updateOne(filter: QueryFilter, data: Partial<TModel>): Promise<boolean> {
+  public async updateOne(
+    filter: QueryFilter,
+    data: Partial<TModel>
+  ): Promise<boolean> {
     logger.trace("Updating one record", { entityName: this.entityName });
     await this.ensureInitialized();
     this.lastAccess = Date.now();
@@ -228,12 +260,15 @@ export abstract class BaseService<TModel = any> {
    * @example
    * await userService.upsert({ email: 'user@example.com' }, { name: 'John', age: 30 });
    */
-  public async upsert(filter: QueryFilter, data: Partial<TModel>): Promise<TModel> {
+  public async upsert(
+    data: Partial<TModel>,
+    filter?: QueryFilter
+  ): Promise<TModel> {
     logger.debug("Performing upsert", { entityName: this.entityName });
     await this.ensureInitialized();
     this.lastAccess = Date.now();
     const processedData = await this.beforeCreate(data);
-    return this.getDAO().upsert<TModel>(this.entityName, filter, processedData);
+    return this.getDAO().upsert<TModel>(this.entityName, processedData, filter);
   }
 
   /**
@@ -253,8 +288,14 @@ export abstract class BaseService<TModel = any> {
    * @example
    * const categories = await productService.distinct('category');
    */
-  public async distinct<T = any>(field: string, filter?: QueryFilter): Promise<T[]> {
-    logger.trace("Getting distinct values", { entityName: this.entityName, field });
+  public async distinct<T = any>(
+    field: string,
+    filter?: QueryFilter
+  ): Promise<T[]> {
+    logger.trace("Getting distinct values", {
+      entityName: this.entityName,
+      field,
+    });
     await this.ensureInitialized();
     this.lastAccess = Date.now();
     return this.getDAO().distinct<T>(this.entityName, field, filter);
@@ -266,7 +307,7 @@ export abstract class BaseService<TModel = any> {
    * const result = await userService.paginate({ status: 'active' }, { page: 1, limit: 20 });
    */
   public async paginate(
-    filter: QueryFilter = {}, 
+    filter: QueryFilter = {},
     options: { page?: number; limit?: number; sort?: any } = {}
   ): Promise<{
     data: TModel[];
@@ -317,13 +358,22 @@ export abstract class BaseService<TModel = any> {
     await this.ensureInitialized();
     this.lastAccess = Date.now();
 
-    const existing = await this.getDAO().findOne<TModel>(this.entityName, filter);
+    const existing = await this.getDAO().findOne<TModel>(
+      this.entityName,
+      filter
+    );
     if (existing) {
       return { record: existing, created: false };
     }
 
-    const processedData = await this.beforeCreate({ ...filter, ...defaultData });
-    const created = await this.getDAO().insert<TModel>(this.entityName, processedData);
+    const processedData = await this.beforeCreate({
+      ...filter,
+      ...defaultData,
+    });
+    const created = await this.getDAO().insert<TModel>(
+      this.entityName,
+      processedData
+    );
     return { record: await this.afterCreate(created), created: true };
   }
 
@@ -337,20 +387,28 @@ export abstract class BaseService<TModel = any> {
     field: keyof TModel,
     value: number = 1
   ): Promise<number> {
-    logger.debug("Incrementing field", { entityName: this.entityName, field, value });
+    logger.debug("Incrementing field", {
+      entityName: this.entityName,
+      field,
+      value,
+    });
     await this.ensureInitialized();
     this.lastAccess = Date.now();
 
     // For SQL databases, use direct SQL
-    if (['postgresql', 'mysql', 'mariadb', 'sqlite', 'sqlserver'].includes(
-      this.getDAO().databaseType
-    )) {
+    if (
+      ["postgresql", "mysql", "mariadb", "sqlite", "sqlserver"].includes(
+        this.getDAO().databaseType
+      )
+    ) {
       const adapter = this.getDAO().getAdapter();
       const whereClause = Object.entries(filter)
         .map(([key, val]) => `${key} = ${adapter.sanitize(val)}`)
-        .join(' AND ');
-      
-      const query = `UPDATE ${this.entityName} SET ${String(field)} = ${String(field)} + ${value} WHERE ${whereClause}`;
+        .join(" AND ");
+
+      const query = `UPDATE ${this.entityName} SET ${String(field)} = ${String(
+        field
+      )} + ${value} WHERE ${whereClause}`;
       const result = await this.getDAO().executeRaw(query);
       return result.rowsAffected || 0;
     }
@@ -360,9 +418,12 @@ export abstract class BaseService<TModel = any> {
     let updated = 0;
     for (const record of records) {
       const currentValue = (record as any)[field] || 0;
-      await this.update({ id: (record as any).id } as QueryFilter, {
-        [field]: currentValue + value,
-      } as any);
+      await this.update(
+        { id: (record as any).id } as QueryFilter,
+        {
+          [field]: currentValue + value,
+        } as any
+      );
       updated++;
     }
     return updated;
@@ -402,7 +463,9 @@ export abstract class BaseService<TModel = any> {
    * await userService.restore({ id: 1 });
    */
   public async restore(filter: QueryFilter): Promise<number> {
-    logger.debug("Restoring soft deleted records", { entityName: this.entityName });
+    logger.debug("Restoring soft deleted records", {
+      entityName: this.entityName,
+    });
     await this.ensureInitialized();
     this.lastAccess = Date.now();
     return this.update(filter, {
@@ -421,7 +484,10 @@ export abstract class BaseService<TModel = any> {
    * ]);
    */
   public async bulkWrite(operations: BulkOperation[]): Promise<IResult> {
-    logger.debug("Performing bulk write", { entityName: this.entityName, count: operations.length });
+    logger.debug("Performing bulk write", {
+      entityName: this.entityName,
+      count: operations.length,
+    });
     await this.ensureInitialized();
     this.lastAccess = Date.now();
     return this.getDAO().bulkWrite(this.entityName, operations);
@@ -466,20 +532,27 @@ export abstract class BaseService<TModel = any> {
   public async withTransaction<T>(
     callback: (service: this) => Promise<T>
   ): Promise<T> {
-    logger.debug("Starting transaction callback", { entityName: this.entityName });
+    logger.debug("Starting transaction callback", {
+      entityName: this.entityName,
+    });
     await this.ensureInitialized();
     return this.getDAO().withTransaction(async () => callback(this));
   }
 
   public async createBatch(data: Partial<TModel>[]): Promise<TModel[]> {
-    logger.debug("Creating batch with transaction", { entityName: this.entityName, count: data.length });
+    logger.debug("Creating batch with transaction", {
+      entityName: this.entityName,
+      count: data.length,
+    });
     return this.withTransaction(async () => this.createMany(data));
   }
 
   public async updateBatch(
     updates: Array<{ filter: QueryFilter; data: Partial<TModel> }>
   ): Promise<number> {
-    logger.debug("Updating batch with transaction", { entityName: this.entityName });
+    logger.debug("Updating batch with transaction", {
+      entityName: this.entityName,
+    });
     return this.withTransaction(async () => {
       let totalCount = 0;
       for (const { filter, data } of updates) {
@@ -491,7 +564,9 @@ export abstract class BaseService<TModel = any> {
   }
 
   public async deleteBatch(filters: QueryFilter[]): Promise<number> {
-    logger.debug("Deleting batch with transaction", { entityName: this.entityName });
+    logger.debug("Deleting batch with transaction", {
+      entityName: this.entityName,
+    });
     return this.withTransaction(async () => {
       let totalCount = 0;
       for (const filter of filters) {
@@ -568,7 +643,10 @@ export abstract class BaseService<TModel = any> {
    * });
    */
   public async createIndex(indexDef: IndexDefinition): Promise<void> {
-    logger.info("Creating index", { entityName: this.entityName, indexName: indexDef.name });
+    logger.info("Creating index", {
+      entityName: this.entityName,
+      indexName: indexDef.name,
+    });
     await this.ensureInitialized();
     await this.getDAO().createIndex(this.entityName, indexDef);
   }
@@ -584,7 +662,9 @@ export abstract class BaseService<TModel = any> {
 
   // ==================== HOOKS ====================
 
-  protected async beforeCreate(data: Partial<TModel>): Promise<Partial<TModel>> {
+  protected async beforeCreate(
+    data: Partial<TModel>
+  ): Promise<Partial<TModel>> {
     return data;
   }
 
@@ -616,7 +696,9 @@ export abstract class BaseService<TModel = any> {
       isInitialized: !!this.dao,
       hasDao: !!this.dao,
       lastAccess: new Date(this.lastAccess).toISOString(),
-      connectionStatus: this.dao?.getAdapter().isConnected() ? 'connected' : 'disconnected',
+      connectionStatus: this.dao?.getAdapter().isConnected()
+        ? "connected"
+        : "disconnected",
       ...daoStatus,
     } as ServiceStatus;
   }
@@ -650,7 +732,9 @@ export abstract class BaseService<TModel = any> {
   }
 
   public async refresh(): Promise<void> {
-    logger.info("Refreshing service connection", { entityName: this.entityName });
+    logger.info("Refreshing service connection", {
+      entityName: this.entityName,
+    });
     if (this.dao) {
       await this.dao.close();
     }

@@ -1,8 +1,7 @@
-import { DatabaseSchema, SQLITE_TYPE_MAPPING } from "@dqcai/orm";
+import { DatabaseSchema, SQLITE_TYPE_MAPPING } from "../src/index";
 
 const core: DatabaseSchema = {
   version: "v1",
-  database_type: "sqlite",
   database_name: "core.db",
   description:
     "Cơ sở dữ liệu hệ thống cốt lõi quản lý toàn bộ hoạt động của doanh nghiệp, bao gồm thông tin doanh nghiệp, cửa hàng và người dùng",
@@ -3971,13 +3970,13 @@ const config: DatabaseSchema = {
       indexes: [
         {
           name: "idx_settings_store_id",
-          columns: ["store_id"],
+          fields: ["store_id"],
           unique: false,
           description: "Chỉ mục để tìm kiếm nhanh theo store_id",
         },
         {
           name: "idx_settings_category_key",
-          columns: ["category", "key"],
+          fields: ["category", "key"],
           unique: true,
           description: "Chỉ mục đảm bảo cặp category-key là duy nhất",
         },
@@ -4053,13 +4052,13 @@ const config: DatabaseSchema = {
       indexes: [
         {
           name: "idx_feature_flags_store_id",
-          columns: ["store_id"],
+          fields: ["store_id"],
           unique: false,
           description: "Chỉ mục để tìm kiếm nhanh theo store_id",
         },
         {
           name: "idx_feature_flags_feature_name",
-          columns: ["feature_name"],
+          fields: ["feature_name"],
           unique: true,
           description: "Chỉ mục đảm bảo feature_name là duy nhất",
         },
@@ -4155,13 +4154,13 @@ const config: DatabaseSchema = {
       indexes: [
         {
           name: "idx_business_rules_store_id",
-          columns: ["store_id"],
+          fields: ["store_id"],
           unique: false,
           description: "Chỉ mục để tìm kiếm nhanh theo store_id",
         },
         {
           name: "idx_business_rules_rule_name",
-          columns: ["rule_name"],
+          fields: ["rule_name"],
           unique: true,
           description: "Chỉ mục đảm bảo rule_name là duy nhất",
         },
@@ -4259,13 +4258,13 @@ const config: DatabaseSchema = {
       indexes: [
         {
           name: "idx_workflow_templates_store_id",
-          columns: ["store_id"],
+          fields: ["store_id"],
           unique: false,
           description: "Chỉ mục để tìm kiếm nhanh theo store_id",
         },
         {
           name: "idx_workflow_templates_template_name",
-          columns: ["template_name"],
+          fields: ["template_name"],
           unique: true,
           description: "Chỉ mục đảm bảo template_name là duy nhất",
         },
@@ -4373,13 +4372,13 @@ const config: DatabaseSchema = {
       indexes: [
         {
           name: "idx_ui_configurations_store_id",
-          columns: ["store_id"],
+          fields: ["store_id"],
           unique: false,
           description: "Chỉ mục để tìm kiếm nhanh theo store_id",
         },
         {
           name: "idx_ui_configurations_screen_component",
-          columns: ["screen_name", "component_name"],
+          fields: ["screen_name", "component_name"],
           unique: true,
           description:
             "Chỉ mục đảm bảo cặp screen_name-component_name là duy nhất",
@@ -4499,13 +4498,13 @@ const config: DatabaseSchema = {
       indexes: [
         {
           name: "idx_integration_configs_store_id",
-          columns: ["store_id"],
+          fields: ["store_id"],
           unique: false,
           description: "Chỉ mục để tìm kiếm nhanh theo store_id",
         },
         {
           name: "idx_integration_configs_integration_name",
-          columns: ["integration_name"],
+          fields: ["integration_name"],
           unique: true,
           description: "Chỉ mục đảm bảo integration_name là duy nhất",
         },
@@ -4602,19 +4601,19 @@ const analisys: DatabaseSchema = {
       indexes: [
         {
           name: "idx_reports_store_id",
-          columns: ["store_id"],
+          fields: ["store_id"],
           unique: false,
           description: "Chỉ mục để tìm kiếm nhanh theo store_id.",
         },
         {
           name: "idx_reports_report_type",
-          columns: ["report_type"],
+          fields: ["report_type"],
           unique: false,
           description: "Chỉ mục để tìm kiếm nhanh theo report_type.",
         },
         {
           name: "idx_reports_created_at",
-          columns: ["created_at"],
+          fields: ["created_at"],
           unique: false,
           description: "Chỉ mục để tìm kiếm nhanh theo thời gian tạo.",
         },
@@ -4694,25 +4693,25 @@ const analisys: DatabaseSchema = {
       indexes: [
         {
           name: "idx_audit_logs_store_id",
-          columns: ["store_id"],
+          fields: ["store_id"],
           unique: false,
           description: "Chỉ mục để tìm kiếm nhanh theo store_id.",
         },
         {
           name: "idx_audit_logs_user_id",
-          columns: ["user_id"],
+          fields: ["user_id"],
           unique: false,
           description: "Chỉ mục để tìm kiếm nhanh theo user_id.",
         },
         {
           name: "idx_audit_logs_table_name",
-          columns: ["table_name"],
+          fields: ["table_name"],
           unique: false,
           description: "Chỉ mục để tìm kiếm nhanh theo table_name.",
         },
         {
           name: "idx_audit_logs_created_at",
-          columns: ["created_at"],
+          fields: ["created_at"],
           unique: false,
           description: "Chỉ mục để tìm kiếm nhanh theo thời gian tạo.",
         },
@@ -4720,4 +4719,17 @@ const analisys: DatabaseSchema = {
       foreign_keys: [],
     },
   },
+};
+
+export {
+  core,
+  oms,
+  payment,
+  media,
+  fnb,
+  config,
+  analisys,
+  scm,
+  product,
+  inventory,
 };

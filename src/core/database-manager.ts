@@ -8,11 +8,11 @@ import {
   RoleRegistry,
   RoleConfig,
   DbFactoryOptions,
-} from "../types/service.types";
-import { DatabaseSchema } from "../types/orm.types";
-import { IAdapter } from "../interfaces/adapter.interface";
+} from "@/types/service.types";
+import { DatabaseSchema } from "@/types/orm.types";
+import { IAdapter } from "@/interfaces/adapter.interface";
 
-import { createModuleLogger, ORMModules } from "../logger";
+import { createModuleLogger, ORMModules } from "@/logger";
 const logger = createModuleLogger(ORMModules.DATABASE_MANAGER);
 
 /**

@@ -8,6 +8,8 @@ import {
   DbConfig,
   EntitySchemaDefinition,
   FieldDefinition,
+  ForeignKeyDefinition,
+  ForeignKeyInfo,
   IConnection,
   IndexDefinition,
   IResult,
@@ -22,13 +24,19 @@ import { createModuleLogger, ORMModules } from "../logger";
 const logger = createModuleLogger(ORMModules.BASE_ADAPTER);
 
 export abstract class BaseAdapter implements IAdapter {
+  createForeignKey(
+    tableName: string,
+    foreignKeyDef: ForeignKeyDefinition
+  ): Promise<void> {
+    throw new Error("Method not implemented.");
+  }
+  dropForeignKey(tableName: string, foreignKeyName: string): Promise<void> {
+    throw new Error("Method not implemented.");
+  }
+  getForeignKeys(tableName: string): Promise<ForeignKeyInfo[]> {
+    throw new Error("Method not implemented.");
+  }
   alterTable(tableName: string, changes: SchemaDefinition): Promise<void> {
-    throw new Error("Method not implemented.");
-  }
-  createIndex(tableName: string, indexDef: IndexDefinition): Promise<void> {
-    throw new Error("Method not implemented.");
-  }
-  dropIndex(tableName: string, indexName: string): Promise<void> {
     throw new Error("Method not implemented.");
   }
   aggregate(tableName: string, pipeline: any[]): Promise<any[]> {
@@ -64,7 +72,12 @@ export abstract class BaseAdapter implements IAdapter {
   ): Promise<any>;
   protected abstract getPlaceholder(index: number): string;
 
-  // Required methods from IAdapter
+  abstract createIndex(
+    tableName: string,
+    indexDef: IndexDefinition
+  ): Promise<void>;
+  abstract dropIndex(tableName: string, indexName: string): Promise<void>;
+  
   abstract executeRaw(query: string | any, params?: any[]): Promise<any>;
   abstract tableExists(tableName: string): Promise<boolean>;
   abstract getTableInfo(
@@ -134,7 +147,7 @@ export abstract class BaseAdapter implements IAdapter {
   // 📋 SCHEMA MANAGEMENT
   // ==========================================
 
-  async createTable(
+ /*  async createTable(
     tableName: string,
     schema: SchemaDefinition
   ): Promise<void> {
@@ -159,7 +172,80 @@ export abstract class BaseAdapter implements IAdapter {
     await this.executeRaw(query, []);
 
     logger.info("Table created successfully", { tableName });
+  } */
+
+  // Trong file: base-adapter.ts
+// Thêm phương thức mới để build foreign keys trong CREATE TABLE
+
+protected buildInlineConstraints(
+  schema: SchemaDefinition,
+  foreignKeys?: ForeignKeyDefinition[]
+): string[] {
+  const constraints: string[] = [];
+
+  // ✅ Foreign keys từ field references
+  for (const [fieldName, fieldDef] of Object.entries(schema)) {
+    if (fieldDef.references) {
+      constraints.push(this.buildForeignKeyConstraint(fieldName, fieldDef));
+    }
   }
+
+  // ✅ Foreign keys từ danh sách riêng (nếu có)
+  if (foreignKeys && foreignKeys.length > 0) {
+    for (const fk of foreignKeys) {
+      const quotedColumns = fk.fields
+        .map(col => QueryHelper.quoteIdentifier(col, this.type))
+        .join(", ");
+      
+      const quotedRefTable = QueryHelper.quoteIdentifier(
+        fk.references.table,
+        this.type
+      );
+      
+      const quotedRefColumns = fk.references.fields
+        .map(col => QueryHelper.quoteIdentifier(col, this.type))
+        .join(", ");
+
+      let constraint = `CONSTRAINT ${QueryHelper.quoteIdentifier(fk.name, this.type)} `;
+      constraint += `FOREIGN KEY (${quotedColumns}) `;
+      constraint += `REFERENCES ${quotedRefTable}(${quotedRefColumns})`;
+
+      if (fk.on_delete) constraint += ` ON DELETE ${fk.on_delete}`;
+      if (fk.on_update) constraint += ` ON UPDATE ${fk.on_update}`;
+
+      constraints.push(constraint);
+    }
+  }
+
+  return constraints;
+}
+
+// ✅ Cập nhật createTable để nhận foreignKeys
+async createTable(
+  tableName: string,
+  schema: SchemaDefinition,
+  foreignKeys?: ForeignKeyDefinition[]
+): Promise<void> {
+  logger.trace("Creating table", { tableName, schema });
+
+  this.ensureConnected();
+  const columns: string[] = [];
+
+  for (const [fieldName, fieldDef] of Object.entries(schema)) {
+    const columnDef = this.buildColumnDefinition(fieldName, fieldDef);
+    columns.push(columnDef);
+  }
+
+  // ✅ Thêm constraints (bao gồm foreign keys)
+  const constraints = this.buildInlineConstraints(schema, foreignKeys);
+  const allColumns = [...columns, ...constraints].join(", ");
+  
+  const query = this.buildCreateTableQuery(tableName, allColumns);
+
+  await this.executeRaw(query, []);
+
+  logger.info("Table created successfully", { tableName });
+}
 
   async dropTable(tableName: string): Promise<void> {
     logger.info("Dropping table", { tableName });
@@ -663,8 +749,8 @@ export abstract class BaseAdapter implements IAdapter {
 
   async upsert(
     tableName: string,
-    filter: QueryFilter,
-    data: any
+    data: any,
+    filter: QueryFilter
   ): Promise<any> {
     logger.debug("Performing upsert", {
       tableName,

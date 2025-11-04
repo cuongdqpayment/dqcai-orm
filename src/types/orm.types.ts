@@ -116,40 +116,55 @@ export interface EntitySchemaDefinition {
  */
 interface IndexDefinitionBase {
   name: string;
+  fields: string[];
+  clustered?: boolean;
   unique?: boolean;
-  type?: "BTREE" | "HASH" | "GIST" | "GIN";
+  type?: "BTREE" | "HASH" | "GIST" | "GIN" | "BITMAP" | "TEXT";
   description?: string;
 }
 
-export type IndexDefinition = IndexDefinitionBase &
-  (
-    | { fields: string[]; columns?: never }
-    | { fields?: never; columns: string[] }
-  );
+export type IndexDefinition = IndexDefinitionBase;
 
 /**
  * Foreign key definition
  */
-interface ReferencesBase {
+type References = {
   table: string;
-}
-type References = ReferencesBase &
-  ({ field: string; fields?: never } | { field?: never; fields: string[] });
+  fields: string[];
+};
 
 // Định nghĩa base cho ForeignKeyDefinition
-interface ForeignKeyDefinitionBase {
+export interface ForeignKeyDefinition {
   name: string;
+  fields: string[];
   references: References;
-  onDelete?: "CASCADE" | "SET NULL" | "RESTRICT" | "NO ACTION";
-  onUpdate?: "CASCADE" | "SET NULL" | "RESTRICT" | "NO ACTION";
   on_delete?: "CASCADE" | "SET NULL" | "RESTRICT" | "NO ACTION";
   on_update?: "CASCADE" | "SET NULL" | "RESTRICT" | "NO ACTION";
   description?: string;
 }
+/**
+ * Foreign Key Actions
+ */
+export enum ForeignKeyAction {
+  CASCADE = "CASCADE",
+  SET_NULL = "SET NULL",
+  SET_DEFAULT = "SET DEFAULT",
+  RESTRICT = "RESTRICT",
+  NO_ACTION = "NO ACTION",
+}
 
-// Ràng buộc ForeignKeyDefinition phải có ít nhất field hoặc fields
-export type ForeignKeyDefinition = ForeignKeyDefinitionBase &
-  ({ field: string; fields?: never } | { field?: never; fields: string[] });
+/**
+ * Foreign Key Information
+ */
+export interface ForeignKeyInfo {
+  name: string; // Tên foreign key
+  tableName: string; // Bảng chứa foreign key
+  columns: string[]; // Cột(s) trong bảng hiện tại
+  referencedTable: string; // Bảng được tham chiếu
+  referencedColumns: string[]; // Cột(s) trong bảng được tham chiếu
+  onDelete?: ForeignKeyAction; // Hành động khi DELETE
+  onUpdate?: ForeignKeyAction; // Hành động khi UPDATE
+}
 
 /**
  * Table options

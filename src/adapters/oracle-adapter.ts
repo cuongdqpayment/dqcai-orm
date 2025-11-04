@@ -7,7 +7,10 @@ import {
   DatabaseType,
   EntitySchemaDefinition,
   FieldDefinition,
+  ForeignKeyDefinition,
+  ForeignKeyInfo,
   IConnection,
+  IndexDefinition,
   SchemaDefinition,
 } from "../types/orm.types";
 import { QueryHelper } from "../utils/query-helper";
@@ -523,6 +526,168 @@ export class OracleAdapter extends BaseAdapter {
     logger.info("Table dropped successfully", { tableName });
   }
 
+  // ========================================
+  // ORACLE ADAPTER - DDL Methods
+  // ========================================
+
+  async createIndex(
+    tableName: string,
+    indexDef: IndexDefinition
+  ): Promise<void> {
+    logger.info("Creating index (Oracle)", {
+      tableName,
+      indexName: indexDef.name,
+    });
+    this.ensureConnected();
+
+    const indexName =
+      indexDef.name || `idx_${tableName}_${indexDef.fields.join("_")}`;
+    const unique = indexDef.unique ? "UNIQUE " : "";
+    const bitmap = indexDef.type === "BITMAP" ? "BITMAP " : "";
+    const fields = indexDef.fields
+      .map((f) => QueryHelper.quoteIdentifier(f, this.type))
+      .join(", ");
+
+    const query = `CREATE ${unique}${bitmap}INDEX ${QueryHelper.quoteIdentifier(
+      indexName,
+      this.type
+    )} ON ${QueryHelper.quoteIdentifier(tableName, this.type)} (${fields})`;
+
+    await this.executeRaw(query, []);
+    logger.info("Index created successfully (Oracle)", {
+      tableName,
+      indexName,
+    });
+  }
+
+  async dropIndex(tableName: string, indexName: string): Promise<void> {
+    logger.info("Dropping index (Oracle)", { tableName, indexName });
+    this.ensureConnected();
+
+    const query = `DROP INDEX ${QueryHelper.quoteIdentifier(
+      indexName,
+      this.type
+    )}`;
+    await this.executeRaw(query, []);
+    logger.info("Index dropped successfully (Oracle)", {
+      tableName,
+      indexName,
+    });
+  }
+
+  async createForeignKey(
+    tableName: string,
+    foreignKeyDef: ForeignKeyDefinition
+  ): Promise<void> {
+    logger.info("Creating foreign key (Oracle)", {
+      tableName,
+      constraintName: foreignKeyDef.name,
+    });
+    this.ensureConnected();
+
+    const constraintName =
+      foreignKeyDef.name || `fk_${tableName}_${foreignKeyDef.fields.join("_")}`;
+    const columns = foreignKeyDef.fields
+      .map((c) => QueryHelper.quoteIdentifier(c, this.type))
+      .join(", ");
+    const refColumns = foreignKeyDef.references.fields
+      .map((c) => QueryHelper.quoteIdentifier(c, this.type))
+      .join(", ");
+
+    let query = `ALTER TABLE ${QueryHelper.quoteIdentifier(
+      tableName,
+      this.type
+    )} 
+    ADD CONSTRAINT ${QueryHelper.quoteIdentifier(constraintName, this.type)} 
+    FOREIGN KEY (${columns}) 
+    REFERENCES ${QueryHelper.quoteIdentifier(
+      foreignKeyDef.references.table,
+      this.type
+    )} (${refColumns})`;
+
+    if (foreignKeyDef.on_delete)
+      query += ` ON DELETE ${foreignKeyDef.on_delete}`;
+    // Oracle không hỗ trợ ON UPDATE CASCADE
+
+    await this.executeRaw(query, []);
+    logger.info("Foreign key created successfully (Oracle)", {
+      tableName,
+      constraintName,
+    });
+  }
+
+  async dropForeignKey(
+    tableName: string,
+    foreignKeyName: string
+  ): Promise<void> {
+    logger.info("Dropping foreign key (Oracle)", { tableName, foreignKeyName });
+    this.ensureConnected();
+
+    const query = `ALTER TABLE ${QueryHelper.quoteIdentifier(
+      tableName,
+      this.type
+    )} 
+    DROP CONSTRAINT ${QueryHelper.quoteIdentifier(foreignKeyName, this.type)}`;
+
+    await this.executeRaw(query, []);
+    logger.info("Foreign key dropped successfully (Oracle)", {
+      tableName,
+      foreignKeyName,
+    });
+  }
+
+  async getForeignKeys(tableName: string): Promise<ForeignKeyInfo[]> {
+    logger.trace("Getting foreign keys (Oracle)", { tableName });
+    this.ensureConnected();
+
+    const query = `
+    SELECT
+      a.constraint_name,
+      a.column_name,
+      c_pk.table_name AS referenced_table,
+      b.column_name AS referenced_column,
+      a.delete_rule
+    FROM all_cons_columns a
+    JOIN all_constraints c ON a.owner = c.owner AND a.constraint_name = c.constraint_name
+    JOIN all_constraints c_pk ON c.r_owner = c_pk.owner AND c.r_constraint_name = c_pk.constraint_name
+    JOIN all_cons_columns b ON c_pk.constraint_name = b.constraint_name AND b.position = a.position
+    WHERE c.constraint_type = 'R'
+      AND a.table_name = :tableName
+  `;
+
+    const result = await this.executeRaw(query, [tableName]);
+
+    return (result.rows || []).map((row: any) => ({
+      constraintName: row.constraint_name,
+      columnName: row.column_name,
+      referencedTable: row.referenced_table,
+      referencedColumn: row.referenced_column,
+      onDelete: row.delete_rule,
+      onUpdate: "NO ACTION", // Oracle không hỗ trợ ON UPDATE
+    }));
+  }
+
+  async alterTable(
+    tableName: string,
+    changes: SchemaDefinition
+  ): Promise<void> {
+    logger.info("Altering table (Oracle)", { tableName });
+    this.ensureConnected();
+
+    for (const [fieldName, fieldDef] of Object.entries(changes)) {
+      const columnDef = this.buildColumnDefinition(fieldName, fieldDef);
+      const query = `ALTER TABLE ${QueryHelper.quoteIdentifier(
+        tableName,
+        this.type
+      )} ADD ${columnDef}`;
+
+      await this.executeRaw(query, []);
+      logger.info("Column added successfully (Oracle)", {
+        tableName,
+        fieldName,
+      });
+    }
+  }
   // ==========================================
   // OVERRIDE INSERT ONE (với sequence handling)
   // ==========================================

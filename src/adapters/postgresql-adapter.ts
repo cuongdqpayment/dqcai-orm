@@ -6,7 +6,11 @@ import { BaseAdapter } from "../core/base-adapter";
 import {
   DatabaseType,
   EntitySchemaDefinition,
+  ForeignKeyDefinition,
+  ForeignKeyInfo,
   IConnection,
+  IndexDefinition,
+  SchemaDefinition,
 } from "../types/orm.types";
 import { QueryHelper } from "../utils/query-helper";
 import { createModuleLogger, ORMModules } from "../logger";
@@ -192,7 +196,7 @@ export class PostgreSQLAdapter extends BaseAdapter {
    */
   protected getPlaceholder(index: number): string {
     logger.trace("Getting PostgreSQL placeholder", { index });
-    return `$${index}`;  // ✅ PHẢI CÓ DẤU $
+    return `$${index}`; // ✅ PHẢI CÓ DẤU $
   }
 
   // ==========================================
@@ -269,6 +273,181 @@ export class PostgreSQLAdapter extends BaseAdapter {
     return tableInfo;
   }
 
+  // ========================================
+  // POSTGRESQL ADAPTER - DDL Methods
+  // ========================================
+
+  async createIndex(
+    tableName: string,
+    indexDef: IndexDefinition
+  ): Promise<void> {
+    logger.info("Creating index (PostgreSQL)", {
+      tableName,
+      indexName: indexDef.name,
+    });
+    this.ensureConnected();
+
+    const indexName =
+      indexDef.name || `idx_${tableName}_${indexDef.fields.join("_")}`;
+    const unique = indexDef.unique ? "UNIQUE " : "";
+    const method = indexDef.type ? `USING ${indexDef.type.toUpperCase()}` : "";
+    const fields = indexDef.fields
+      .map((f) => QueryHelper.quoteIdentifier(f, this.type))
+      .join(", ");
+
+    const query = `CREATE ${unique}INDEX IF NOT EXISTS ${QueryHelper.quoteIdentifier(
+      indexName,
+      this.type
+    )} ON ${QueryHelper.quoteIdentifier(
+      tableName,
+      this.type
+    )} ${method} (${fields})`;
+
+    await this.executeRaw(query, []);
+    logger.info("Index created successfully (PostgreSQL)", {
+      tableName,
+      indexName,
+    });
+  }
+
+  async dropIndex(tableName: string, indexName: string): Promise<void> {
+    logger.info("Dropping index (PostgreSQL)", { tableName, indexName });
+    this.ensureConnected();
+
+    const query = `DROP INDEX IF EXISTS ${QueryHelper.quoteIdentifier(
+      indexName,
+      this.type
+    )}`;
+    await this.executeRaw(query, []);
+    logger.info("Index dropped successfully (PostgreSQL)", {
+      tableName,
+      indexName,
+    });
+  }
+
+  async createForeignKey(
+    tableName: string,
+    foreignKeyDef: ForeignKeyDefinition
+  ): Promise<void> {
+    logger.info("Creating foreign key (PostgreSQL)", {
+      tableName,
+      constraintName: foreignKeyDef.name,
+    });
+    this.ensureConnected();
+
+    const constraintName =
+      foreignKeyDef.name || `fk_${tableName}_${foreignKeyDef.fields.join("_")}`;
+    const columns = foreignKeyDef.fields
+      .map((c) => QueryHelper.quoteIdentifier(c, this.type))
+      .join(", ");
+    const refColumns = foreignKeyDef.references.fields
+      .map((c) => QueryHelper.quoteIdentifier(c, this.type))
+      .join(", ");
+
+    let query = `ALTER TABLE ${QueryHelper.quoteIdentifier(
+      tableName,
+      this.type
+    )} 
+    ADD CONSTRAINT ${QueryHelper.quoteIdentifier(constraintName, this.type)} 
+    FOREIGN KEY (${columns}) 
+    REFERENCES ${QueryHelper.quoteIdentifier(
+      foreignKeyDef.references.table,
+      this.type
+    )} (${refColumns})`;
+
+    if (foreignKeyDef.on_delete) query += ` ON DELETE ${foreignKeyDef.on_delete}`;
+    if (foreignKeyDef.on_update) query += ` ON UPDATE ${foreignKeyDef.on_update}`;
+
+    await this.executeRaw(query, []);
+    logger.info("Foreign key created successfully (PostgreSQL)", {
+      tableName,
+      constraintName,
+    });
+  }
+
+  async dropForeignKey(
+    tableName: string,
+    foreignKeyName: string
+  ): Promise<void> {
+    logger.info("Dropping foreign key (PostgreSQL)", {
+      tableName,
+      foreignKeyName,
+    });
+    this.ensureConnected();
+
+    const query = `ALTER TABLE ${QueryHelper.quoteIdentifier(
+      tableName,
+      this.type
+    )} 
+    DROP CONSTRAINT IF EXISTS ${QueryHelper.quoteIdentifier(
+      foreignKeyName,
+      this.type
+    )}`;
+
+    await this.executeRaw(query, []);
+    logger.info("Foreign key dropped successfully (PostgreSQL)", {
+      tableName,
+      foreignKeyName,
+    });
+  }
+
+  async getForeignKeys(tableName: string): Promise<ForeignKeyInfo[]> {
+    logger.trace("Getting foreign keys (PostgreSQL)", { tableName });
+    this.ensureConnected();
+
+    const query = `
+    SELECT
+      tc.constraint_name,
+      kcu.column_name,
+      ccu.table_name AS referenced_table,
+      ccu.column_name AS referenced_column,
+      rc.delete_rule,
+      rc.update_rule
+    FROM information_schema.table_constraints AS tc
+    JOIN information_schema.key_column_usage AS kcu
+      ON tc.constraint_name = kcu.constraint_name
+    JOIN information_schema.constraint_column_usage AS ccu
+      ON ccu.constraint_name = tc.constraint_name
+    JOIN information_schema.referential_constraints AS rc
+      ON rc.constraint_name = tc.constraint_name
+    WHERE tc.constraint_type = 'FOREIGN KEY'
+      AND tc.table_name = $1
+  `;
+
+    const result = await this.executeRaw(query, [tableName]);
+
+    return (result.rows || []).map((row: any) => ({
+      constraintName: row.constraint_name,
+      columnName: row.column_name,
+      referencedTable: row.referenced_table,
+      referencedColumn: row.referenced_column,
+      onDelete: row.delete_rule,
+      onUpdate: row.update_rule,
+    }));
+  }
+
+  async alterTable(
+    tableName: string,
+    changes: SchemaDefinition
+  ): Promise<void> {
+    logger.info("Altering table (PostgreSQL)", { tableName });
+    this.ensureConnected();
+
+    for (const [fieldName, fieldDef] of Object.entries(changes)) {
+      const columnDef = this.buildColumnDefinition(fieldName, fieldDef);
+      const query = `ALTER TABLE ${QueryHelper.quoteIdentifier(
+        tableName,
+        this.type
+      )} ADD COLUMN ${columnDef}`;
+
+      await this.executeRaw(query, []);
+      logger.info("Column added successfully (PostgreSQL)", {
+        tableName,
+        fieldName,
+      });
+    }
+  }
+
   // ==========================================
   // ✅ OVERRIDE INSERT ONE - Sử dụng RETURNING *
   // ==========================================
@@ -333,11 +512,7 @@ export class PostgreSQLAdapter extends BaseAdapter {
   // ✅ OVERRIDE UPDATE - PostgreSQL specific
   // ==========================================
 
-  async update(
-    tableName: string,
-    filter: any,
-    data: any
-  ): Promise<number> {
+  async update(tableName: string, filter: any, data: any): Promise<number> {
     logger.debug("Updating records", {
       tableName,
       keys: Object.keys(data),
@@ -354,7 +529,10 @@ export class PostgreSQLAdapter extends BaseAdapter {
     const setClauses = keys
       .map(
         (key, i) =>
-          `${QueryHelper.quoteIdentifier(key, this.type)} = ${this.getPlaceholder(i + 1)}`
+          `${QueryHelper.quoteIdentifier(
+            key,
+            this.type
+          )} = ${this.getPlaceholder(i + 1)}`
       )
       .join(", ");
 

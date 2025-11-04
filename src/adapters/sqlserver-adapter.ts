@@ -6,7 +6,11 @@ import { BaseAdapter } from "../core/base-adapter";
 import {
   DatabaseType,
   EntitySchemaDefinition,
+  ForeignKeyDefinition,
+  ForeignKeyInfo,
   IConnection,
+  IndexDefinition,
+  SchemaDefinition,
 } from "../types/orm.types";
 import { QueryHelper } from "../utils/query-helper";
 import { createModuleLogger, ORMModules } from "../logger";
@@ -366,6 +370,171 @@ export class SQLServerAdapter extends BaseAdapter {
     return autoIncrementColumn;
   }
 
+  // ========================================
+  // SQL SERVER ADAPTER - DDL Methods
+  // ========================================
+
+  async createIndex(
+    tableName: string,
+    indexDef: IndexDefinition
+  ): Promise<void> {
+    logger.info("Creating index (SQL Server)", {
+      tableName,
+      indexName: indexDef.name,
+    });
+    this.ensureConnected();
+
+    const indexName =
+      indexDef.name || `idx_${tableName}_${indexDef.fields.join("_")}`;
+    const unique = indexDef.unique ? "UNIQUE " : "";
+    const clustered = indexDef.clustered ? "CLUSTERED " : "NONCLUSTERED ";
+    const fields = indexDef.fields
+      .map((f) => QueryHelper.quoteIdentifier(f, this.type))
+      .join(", ");
+
+    const query = `CREATE ${unique}${clustered}INDEX ${QueryHelper.quoteIdentifier(
+      indexName,
+      this.type
+    )} ON ${QueryHelper.quoteIdentifier(tableName, this.type)} (${fields})`;
+
+    await this.executeRaw(query, []);
+    logger.info("Index created successfully (SQL Server)", {
+      tableName,
+      indexName,
+    });
+  }
+
+  async dropIndex(tableName: string, indexName: string): Promise<void> {
+    logger.info("Dropping index (SQL Server)", { tableName, indexName });
+    this.ensureConnected();
+
+    const query = `DROP INDEX ${QueryHelper.quoteIdentifier(
+      indexName,
+      this.type
+    )} ON ${QueryHelper.quoteIdentifier(tableName, this.type)}`;
+
+    await this.executeRaw(query, []);
+    logger.info("Index dropped successfully (SQL Server)", {
+      tableName,
+      indexName,
+    });
+  }
+
+  async createForeignKey(
+    tableName: string,
+    foreignKeyDef: ForeignKeyDefinition
+  ): Promise<void> {
+    logger.info("Creating foreign key (SQL Server)", {
+      tableName,
+      constraintName: foreignKeyDef.name,
+    });
+    this.ensureConnected();
+
+    const constraintName =
+      foreignKeyDef.name ||
+      `fk_${tableName}_${foreignKeyDef.fields.join("_")}`;
+    const columns = foreignKeyDef.fields
+      .map((c) => QueryHelper.quoteIdentifier(c, this.type))
+      .join(", ");
+    const refColumns = foreignKeyDef.references.fields
+      .map((c) => QueryHelper.quoteIdentifier(c, this.type))
+      .join(", ");
+
+    let query = `ALTER TABLE ${QueryHelper.quoteIdentifier(
+      tableName,
+      this.type
+    )} 
+    ADD CONSTRAINT ${QueryHelper.quoteIdentifier(constraintName, this.type)} 
+    FOREIGN KEY (${columns}) 
+    REFERENCES ${QueryHelper.quoteIdentifier(
+      foreignKeyDef.references.table,
+      this.type
+    )} (${refColumns})`;
+
+    if (foreignKeyDef.on_delete) query += ` ON DELETE ${foreignKeyDef.on_delete}`;
+    if (foreignKeyDef.on_update) query += ` ON UPDATE ${foreignKeyDef.on_update}`;
+
+    await this.executeRaw(query, []);
+    logger.info("Foreign key created successfully (SQL Server)", {
+      tableName,
+      constraintName,
+    });
+  }
+
+  async dropForeignKey(
+    tableName: string,
+    foreignKeyName: string
+  ): Promise<void> {
+    logger.info("Dropping foreign key (SQL Server)", {
+      tableName,
+      foreignKeyName,
+    });
+    this.ensureConnected();
+
+    const query = `ALTER TABLE ${QueryHelper.quoteIdentifier(
+      tableName,
+      this.type
+    )} 
+    DROP CONSTRAINT ${QueryHelper.quoteIdentifier(foreignKeyName, this.type)}`;
+
+    await this.executeRaw(query, []);
+    logger.info("Foreign key dropped successfully (SQL Server)", {
+      tableName,
+      foreignKeyName,
+    });
+  }
+
+  async getForeignKeys(tableName: string): Promise<ForeignKeyInfo[]> {
+    logger.trace("Getting foreign keys (SQL Server)", { tableName });
+    this.ensureConnected();
+
+    const query = `
+    SELECT
+      fk.name AS constraint_name,
+      COL_NAME(fkc.parent_object_id, fkc.parent_column_id) AS column_name,
+      OBJECT_NAME(fk.referenced_object_id) AS referenced_table,
+      COL_NAME(fkc.referenced_object_id, fkc.referenced_column_id) AS referenced_column,
+      fk.delete_referential_action_desc AS delete_rule,
+      fk.update_referential_action_desc AS update_rule
+    FROM sys.foreign_keys AS fk
+    INNER JOIN sys.foreign_key_columns AS fkc
+      ON fk.object_id = fkc.constraint_object_id
+    WHERE OBJECT_NAME(fk.parent_object_id) = @tableName
+  `;
+
+    const result = await this.executeRaw(query, [tableName]);
+
+    return (result.rows || []).map((row: any) => ({
+      constraintName: row.constraint_name,
+      columnName: row.column_name,
+      referencedTable: row.referenced_table,
+      referencedColumn: row.referenced_column,
+      onDelete: row.delete_rule,
+      onUpdate: row.update_rule,
+    }));
+  }
+
+  async alterTable(
+    tableName: string,
+    changes: SchemaDefinition
+  ): Promise<void> {
+    logger.info("Altering table (SQL Server)", { tableName });
+    this.ensureConnected();
+
+    for (const [fieldName, fieldDef] of Object.entries(changes)) {
+      const columnDef = this.buildColumnDefinition(fieldName, fieldDef);
+      const query = `ALTER TABLE ${QueryHelper.quoteIdentifier(
+        tableName,
+        this.type
+      )} ADD ${columnDef}`;
+
+      await this.executeRaw(query, []);
+      logger.info("Column added successfully (SQL Server)", {
+        tableName,
+        fieldName,
+      });
+    }
+  }
   // ==========================================
   // OVERRIDE INSERT ONE (với OUTPUT INSERTED.*)
   // ==========================================
