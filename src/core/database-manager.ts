@@ -1,5 +1,5 @@
 // ========================
-// src/core/database-manager.ts (FIXED ADAPTER SHARING)
+// src/core/database-manager.ts (ENHANCED WITH CLOSE METHODS)
 // ========================
 
 import { UniversalDAO } from "./universal-dao";
@@ -16,12 +16,13 @@ import { createModuleLogger, ORMModules } from "@/logger";
 const logger = createModuleLogger(ORMModules.DATABASE_MANAGER);
 
 /**
- * Database Manager (Singleton) - FIXED để đảm bảo adapter sharing
+ * Database Manager (Singleton) - Enhanced with proper connection lifecycle
  */
 export class DatabaseManager {
   private static instance: DatabaseManager;
   private static roleRegistry: RoleRegistry = {};
   private static daoCache: Map<string, UniversalDAO<any>> = new Map();
+  private static isClosingConnections: boolean = false;
 
   private constructor() {
     logger.trace("Creating DatabaseManager singleton instance");
@@ -42,233 +43,401 @@ export class DatabaseManager {
 
   public static registerSchema(key: string, schema: DatabaseSchema): void {
     logger.trace("Registering schema via DatabaseManager", { key });
-
     DatabaseFactory.registerSchema(key, schema);
-
     logger.debug("Schema registered successfully via DatabaseManager", { key });
   }
 
   public static registerSchemas(schemas: Record<string, DatabaseSchema>): void {
-    logger.trace("Registering multiple schemas via DatabaseManager", { schemaCount: Object.keys(schemas).length });
-
+    logger.trace("Registering multiple schemas via DatabaseManager", {
+      schemaCount: Object.keys(schemas).length,
+    });
     DatabaseFactory.registerSchemas(schemas);
-
-    logger.debug("Multiple schemas registered successfully via DatabaseManager", { schemaCount: Object.keys(schemas).length });
+    logger.debug(
+      "Multiple schemas registered successfully via DatabaseManager",
+      { schemaCount: Object.keys(schemas).length }
+    );
   }
 
   public static getSchema(key: string): DatabaseSchema | undefined {
     logger.trace("Getting schema via DatabaseManager", { key });
-
     return DatabaseFactory.getSchema(key);
   }
 
   public static getAllSchemas(): Map<string, DatabaseSchema> {
     logger.trace("Getting all schemas via DatabaseManager");
-
     return DatabaseFactory.getAllSchemas();
   }
 
   public static hasSchema(key: string): boolean {
     logger.trace("Checking schema existence via DatabaseManager", { key });
-
     return DatabaseFactory.hasSchema(key);
   }
 
   // ==================== ADAPTER MANAGEMENT ====================
 
-  /**
-   * Đăng ký adapter instance cho schema
-   * ✅ KEY FIX: Khi user đăng ký adapter, nó sẽ được dùng cho tất cả operations
-   */
   public static registerAdapterInstance(
     schemaKey: string,
     adapter: IAdapter<any>
   ): void {
-    logger.debug("Registering adapter instance via DatabaseManager", { 
+    logger.debug("Registering adapter instance via DatabaseManager", {
       schemaKey,
-      isConnected: adapter.isConnected() 
+      isConnected: adapter.isConnected(),
     });
 
-    // Đăng ký vào DatabaseFactory
     DatabaseFactory.registerAdapterInstance(schemaKey, adapter);
 
-    // ✅ CRITICAL: Nếu đã có DAO trong cache, update adapter của nó
     const existingDAO = this.daoCache.get(schemaKey);
     if (existingDAO) {
       logger.debug("Updating existing DAO with new adapter", { schemaKey });
-      // DAO sẽ sử dụng adapter mới
       (existingDAO as any).adapter = adapter;
     }
 
     logger.info("Adapter instance registered and synchronized", { schemaKey });
   }
 
-  /**
-   * Lấy adapter instance
-   */
-  public static getAdapterInstance(schemaKey: string): IAdapter<any> | undefined {
+  public static getAdapterInstance(
+    schemaKey: string
+  ): IAdapter<any> | undefined {
     logger.trace("Getting adapter instance via DatabaseManager", { schemaKey });
-
     return DatabaseFactory.getAdapterInstance(schemaKey);
   }
 
-  // ==================== DAO MANAGEMENT (FIXED) ====================
+  // ==================== DAO MANAGEMENT ====================
 
-  /**
-   * ✅ FIXED: Lấy hoặc tạo DAO - Đảm bảo dùng adapter đã register
-   */
   public static async getDAO(
     schemaKey: string,
     options?: Partial<DbFactoryOptions>
   ): Promise<UniversalDAO<any>> {
-    logger.debug("Getting DAO with adapter sharing", { 
-      schemaKey, 
+    logger.debug("Getting DAO with adapter sharing", {
+      schemaKey,
       hasCachedDAO: this.daoCache.has(schemaKey),
-      hasRegisteredAdapter: !!DatabaseFactory.getAdapterInstance(schemaKey)
+      hasRegisteredAdapter: !!DatabaseFactory.getAdapterInstance(schemaKey),
     });
 
-    // 1. Kiểm tra cache - nếu có và adapter còn connected
     const cachedDAO = this.daoCache.get(schemaKey);
     if (cachedDAO) {
       const adapter = cachedDAO.getAdapter();
       if (adapter.isConnected()) {
-        logger.debug("Returning cached DAO with active connection", { schemaKey });
+        logger.debug("Returning cached DAO with active connection", {
+          schemaKey,
+        });
         return cachedDAO;
       } else {
-        logger.debug("Cached DAO has disconnected adapter, will recreate", { schemaKey });
+        logger.debug("Cached DAO has disconnected adapter, will recreate", {
+          schemaKey,
+        });
       }
     }
 
-    // 2. ✅ KEY FIX: Kiểm tra xem đã có adapter instance được register chưa
     const existingAdapter = DatabaseFactory.getAdapterInstance(schemaKey);
-    
+
     if (existingAdapter) {
-      logger.info("Found registered adapter, using it for DAO creation", { 
+      logger.info("Found registered adapter, using it for DAO creation", {
         schemaKey,
-        isConnected: existingAdapter.isConnected() 
+        isConnected: existingAdapter.isConnected(),
       });
-      
-      // Đảm bảo adapter đã connected
+
       if (!existingAdapter.isConnected()) {
-        logger.debug("Registered adapter not connected, will auto-connect", { schemaKey });
+        logger.debug("Registered adapter not connected, will auto-connect", {
+          schemaKey,
+        });
       }
-      
-      // ✅ CRITICAL FIX: autoConnect = false vì adapter đã connected rồi
+
       options = {
         ...options,
         adapter: existingAdapter,
-        autoConnect: false // KHÔNG gọi connect lại
+        autoConnect: false,
       };
     } else {
-      logger.debug("No registered adapter found, will create new one", { schemaKey });
+      logger.debug("No registered adapter found, will create new one", {
+        schemaKey,
+      });
     }
 
-    // 3. Tạo DAO mới từ DatabaseFactory (sẽ dùng adapter đã inject hoặc tạo mới)
     const newDAO = await DatabaseFactory.createDAO(schemaKey, options);
-    
-    // 4. Lưu vào cache
     this.daoCache.set(schemaKey, newDAO);
 
-    logger.info("DAO created/updated and cached successfully", { 
+    logger.info("DAO created/updated and cached successfully", {
       schemaKey,
-      usedExistingAdapter: !!existingAdapter 
+      usedExistingAdapter: !!existingAdapter,
     });
 
     return newDAO;
   }
 
-  /**
-   * ✅ NEW: Phương thức tiện ích để đảm bảo có DAO với adapter đã register
-   */
   public static async getOrCreateDAO(
     schemaKey: string,
     options?: Partial<DbFactoryOptions>
   ): Promise<UniversalDAO<any>> {
     logger.trace("Getting or creating DAO", { schemaKey });
-    
     return this.getDAO(schemaKey, options);
   }
 
-  /**
-   * Lấy DAO từ cache (không tạo mới)
-   */
   public static getCachedDAO(schemaKey: string): UniversalDAO<any> | undefined {
     logger.trace("Getting cached DAO", { schemaKey });
-
     return this.daoCache.get(schemaKey);
   }
 
+  // ==================== LAZY INITIALIZATION & BULK OPERATIONS ====================
+
   /**
-   * Đóng và xóa DAO khỏi cache
+   * Initialize all available databases
+   * Khởi tạo tất cả các schema đã được đăng ký
+   */
+  public static async initializeAll(): Promise<void> {
+    logger.info("Initializing all available databases");
+
+    const availableSchemas = Array.from(DatabaseFactory.getAllSchemas().keys());
+
+    if (availableSchemas.length === 0) {
+      logger.warn("No schemas available to initialize");
+      return;
+    }
+
+    logger.debug("Available schemas for initialization", {
+      schemaCount: availableSchemas.length,
+      schemas: availableSchemas,
+    });
+
+    const failedInitializations: { key: string; error: Error }[] = [];
+
+    const initPromises = availableSchemas.map(async (key) => {
+      try {
+        logger.debug("Initializing schema", { key });
+        const dao = await this.getDAO(key);
+        await dao.ensureConnected();
+
+        logger.info("Schema initialized successfully", {
+          key,
+          isConnected: dao.getAdapter().isConnected(),
+        });
+      } catch (error) {
+        const err = error instanceof Error ? error : new Error(String(error));
+        logger.error("Failed to initialize schema", {
+          key,
+          error: err.message,
+        });
+        failedInitializations.push({ key, error: err });
+      }
+    });
+
+    await Promise.all(initPromises);
+
+    if (failedInitializations.length > 0) {
+      const errorSummary = failedInitializations
+        .map((f) => `  - ${f.key}: ${f.error.message}`)
+        .join("\n");
+
+      logger.error("Failed to initialize one or more databases", {
+        failedDatabases: failedInitializations.map((f) => f.key),
+        errorSummary,
+      });
+
+      throw new Error(
+        `Failed to initialize one or more databases:\n${errorSummary}`
+      );
+    }
+
+    logger.info("All databases initialized successfully", {
+      totalSchemas: availableSchemas.length,
+      totalConnections: this.daoCache.size,
+    });
+  }
+
+  /**
+   * Get database with lazy loading
+   * Tự động khởi tạo connection nếu chưa tồn tại
+   */
+  public static async getLazyLoading(key: string): Promise<UniversalDAO<any>> {
+    logger.debug("Getting database with lazy loading", { key });
+
+    // Check if schema exists
+    if (!DatabaseFactory.hasSchema(key)) {
+      logger.error("Schema not found for lazy loading", { key });
+      throw new Error(`Invalid database key: ${key}. Schema not found.`);
+    }
+
+    // Try to get cached DAO first
+    const cachedDAO = this.daoCache.get(key);
+    if (cachedDAO) {
+      const adapter = cachedDAO.getAdapter();
+      if (adapter.isConnected()) {
+        logger.debug("Returning cached connected DAO", { key });
+        return cachedDAO;
+      } else {
+        logger.debug("Cached DAO exists but not connected, will reconnect", {
+          key,
+        });
+      }
+    }
+
+    // Create or reconnect DAO
+    logger.debug("Creating new connection for lazy loading", { key });
+
+    try {
+      const dao = await this.getDAO(key);
+      await dao.ensureConnected();
+
+      logger.info("Database connection created via lazy loading", {
+        key,
+        isConnected: dao.getAdapter().isConnected(),
+      });
+
+      return dao;
+    } catch (error) {
+      logger.error("Failed to lazy load database", {
+        key,
+        error: (error as Error).message,
+      });
+      throw error;
+    }
+  }
+
+  // ==================== ENHANCED CONNECTION CLOSING ====================
+
+  /**
+   * Close specific connection (Enhanced version)
+   * Similar to closeDAO but with better error handling and state management
+   */
+  public static async closeConnection(dbKey: string): Promise<void> {
+    logger.debug("Closing specific connection", { dbKey });
+
+    const dao = this.daoCache.get(dbKey);
+    if (dao) {
+      try {
+        await dao.close();
+        this.daoCache.delete(dbKey);
+
+        // Also unregister adapter instance
+        await DatabaseFactory.unregisterAdapterInstance(dbKey);
+
+        logger.info("Database connection closed successfully", { dbKey });
+      } catch (error) {
+        logger.error("Error closing database connection", {
+          dbKey,
+          error: (error as Error).message,
+        });
+        throw error;
+      }
+    } else {
+      logger.warn("Attempted to close non-existent connection", { dbKey });
+    }
+  }
+
+  /**
+   * Close DAO (Backward compatibility alias)
    */
   public static async closeDAO(schemaKey: string): Promise<void> {
-    logger.trace("Closing DAO", { schemaKey });
-
-    const dao = this.daoCache.get(schemaKey);
-    if (dao) {
-      logger.debug("DAO found in cache, closing connection", { schemaKey });
-      await dao.close();
-      this.daoCache.delete(schemaKey);
-
-      logger.info("DAO closed and removed from cache", { schemaKey });
-    } else {
-      logger.debug("No DAO found in cache to close", { schemaKey });
-    }
-    
-    // Xóa adapter instance
-    await DatabaseFactory.unregisterAdapterInstance(schemaKey);
-
-    logger.debug("Adapter instance unregistered", { schemaKey });
+    logger.trace("Closing DAO (via closeConnection)", { schemaKey });
+    await this.closeConnection(schemaKey);
   }
 
   /**
-   * Đóng tất cả DAOs
+   * Close all connections gracefully
+   */
+  public static async closeAllConnections(): Promise<void> {
+    if (this.isClosingConnections) {
+      logger.warn("Already closing connections, skipping duplicate call");
+      return;
+    }
+
+    this.isClosingConnections = true;
+    logger.info("Closing all connections", { daoCount: this.daoCache.size });
+
+    try {
+      const closePromises = Array.from(this.daoCache.keys()).map((key) =>
+        this.closeConnection(key).catch((error) => {
+          logger.error("Error closing connection during batch close", {
+            key,
+            error: (error as Error).message,
+          });
+          // Continue closing other connections even if one fails
+        })
+      );
+
+      await Promise.all(closePromises);
+      logger.info("All connections closed successfully");
+    } finally {
+      this.isClosingConnections = false;
+    }
+  }
+
+  /**
+   * Close all DAOs (Backward compatibility alias)
    */
   public static async closeAllDAOs(): Promise<void> {
-    logger.info("Closing all DAOs", { daoCount: this.daoCache.size });
-
-    const closePromises = Array.from(this.daoCache.keys()).map((key) =>
-      this.closeDAO(key)
-    );
-    await Promise.all(closePromises);
-
-    logger.info("All DAOs closed successfully");
+    logger.trace("Closing all DAOs (via closeAllConnections)");
+    await this.closeAllConnections();
   }
 
   /**
-   * Lấy tất cả DAOs đang cached
+   * Close all connections and reset complete state
+   * This is a full cleanup method that resets everything
    */
+  public static async closeAll(): Promise<void> {
+    logger.info("Closing all connections and resetting complete state");
+
+    try {
+      // Close all connections first
+      await this.closeAllConnections();
+
+      // Reset all state
+      this.roleRegistry = {};
+      this.daoCache.clear();
+      this.isClosingConnections = false;
+
+      // Reset DatabaseFactory
+      DatabaseFactory.reset();
+
+      logger.info("All connections closed and state reset successfully");
+    } catch (error) {
+      logger.error("Error during closeAll", {
+        error: (error as Error).message,
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Reset manager (Backward compatibility - now uses closeAll)
+   */
+  public static async reset(): Promise<void> {
+    logger.warn("Resetting DatabaseManager (via closeAll)", {
+      daoCount: this.daoCache.size,
+      roleCount: Object.keys(this.roleRegistry).length,
+    });
+
+    await this.closeAll();
+  }
+
   public static getAllDAOs(): Map<string, UniversalDAO<any>> {
     logger.trace("Getting all cached DAOs", { total: this.daoCache.size });
-
     return new Map(this.daoCache);
   }
 
   // Compatibility aliases
   public static getConnection = this.getCachedDAO;
-  public static closeConnection = this.closeDAO;
-  public static closeAllConnections = this.closeAllDAOs;
   public static getAllConnections = this.getAllDAOs;
 
   // ==================== ROLE MANAGEMENT ====================
 
   public static registerRole(roleConfig: RoleConfig): void {
     logger.trace("Registering role", { roleName: roleConfig.roleName });
-
     this.roleRegistry[roleConfig.roleName] = roleConfig;
-
-    logger.debug("Role registered successfully", { roleName: roleConfig.roleName });
+    logger.debug("Role registered successfully", {
+      roleName: roleConfig.roleName,
+    });
   }
 
   public static getRole(roleName: string): RoleConfig | undefined {
     logger.trace("Getting role", { roleName });
-
     return this.roleRegistry[roleName];
   }
 
   public static getAllRoles(): RoleRegistry {
-    logger.trace("Getting all roles", { totalRoles: Object.keys(this.roleRegistry).length });
-
+    logger.trace("Getting all roles", {
+      totalRoles: Object.keys(this.roleRegistry).length,
+    });
     return { ...this.roleRegistry };
   }
 
@@ -290,9 +459,6 @@ export class DatabaseManager {
     };
   }
 
-  /**
-   * Khởi tạo connections cho role
-   */
   public static async initializeRoleConnections(
     roleName: string,
     initOptional: boolean = false
@@ -302,7 +468,10 @@ export class DatabaseManager {
     const { required, optional } = this.getRoleDatabases(roleName);
     const databaseKeys = initOptional ? [...required, ...optional] : required;
 
-    logger.debug("Databases to initialize for role", { roleName, databaseKeys });
+    logger.debug("Databases to initialize for role", {
+      roleName,
+      databaseKeys,
+    });
 
     const daos: UniversalDAO<any>[] = [];
 
@@ -311,29 +480,30 @@ export class DatabaseManager {
         logger.trace("Initializing DAO for database key", { dbKey });
         const dao = await this.getDAO(dbKey);
         daos.push(dao);
-
         logger.debug("DAO initialized successfully for database", { dbKey });
       } catch (error) {
-        logger.error(`Failed to initialize connection for ${dbKey}:`, { dbKey, error: (error as Error).message });
+        logger.error(`Failed to initialize connection for ${dbKey}:`, {
+          dbKey,
+          error: (error as Error).message,
+        });
         if (required.includes(dbKey)) {
           throw error;
         }
-
-        logger.warn("Skipping optional database initialization due to error", { dbKey });
+        logger.warn("Skipping optional database initialization due to error", {
+          dbKey,
+        });
       }
     }
 
-    logger.info("Role connections initialized successfully", { roleName, daoCount: daos.length });
-
+    logger.info("Role connections initialized successfully", {
+      roleName,
+      daoCount: daos.length,
+    });
     return daos;
   }
 
-  // Compatibility alias
   public static initializeUserRoleConnections = this.initializeRoleConnections;
 
-  /**
-   * Lấy danh sách databases đã kết nối cho role
-   */
   public static getActiveDatabases(roleName: string): string[] {
     logger.trace("Getting active databases for role", { roleName });
 
@@ -345,12 +515,13 @@ export class DatabaseManager {
       return dao && dao.getAdapter().isConnected();
     });
 
-    logger.debug("Active databases retrieved", { roleName, activeCount: activeDatabases.length });
-
+    logger.debug("Active databases retrieved", {
+      roleName,
+      activeCount: activeDatabases.length,
+    });
     return activeDatabases;
   }
 
-  // Compatibility alias
   public static getCurrentUserDatabases = this.getActiveDatabases;
 
   // ==================== STATUS & HEALTH ====================
@@ -361,11 +532,12 @@ export class DatabaseManager {
     roles: number;
     activeConnections: string[];
     adapterInstances: number;
+    isClosingConnections: boolean;
   } {
     logger.trace("Getting DatabaseManager status");
 
     const factoryStats = DatabaseFactory.getStats();
-    
+
     const status = {
       schemas: factoryStats.schemas,
       daos: this.daoCache.size,
@@ -375,15 +547,17 @@ export class DatabaseManager {
         return dao && dao.getAdapter().isConnected();
       }),
       adapterInstances: factoryStats.adapterInstances,
+      isClosingConnections: this.isClosingConnections,
     };
 
     logger.debug("Status retrieved", { status });
-
     return status;
   }
 
   public static async healthCheck(): Promise<Record<string, boolean>> {
-    logger.info("Starting health check for all DAOs", { daoCount: this.daoCache.size });
+    logger.info("Starting health check for all DAOs", {
+      daoCount: this.daoCache.size,
+    });
 
     const health: Record<string, boolean> = {};
 
@@ -392,33 +566,24 @@ export class DatabaseManager {
         logger.trace("Checking health for DAO", { key });
         await dao.ensureConnected();
         health[key] = dao.getAdapter().isConnected();
-
-        logger.debug("Health check passed for DAO", { key, isHealthy: health[key] });
+        logger.debug("Health check passed for DAO", {
+          key,
+          isHealthy: health[key],
+        });
       } catch (error) {
         health[key] = false;
-
-        logger.error("Health check failed for DAO", { key, error: (error as Error).message });
+        logger.error("Health check failed for DAO", {
+          key,
+          error: (error as Error).message,
+        });
       }
     }
 
-    logger.info("Health check completed", { healthyCount: Object.values(health).filter(Boolean).length, total: this.daoCache.size });
-
-    return health;
-  }
-
-  /**
-   * Reset toàn bộ manager
-   */
-  public static reset(): void {
-    logger.warn("Resetting DatabaseManager", { 
-      daoCount: this.daoCache.size,
-      roleCount: Object.keys(this.roleRegistry).length
+    logger.info("Health check completed", {
+      healthyCount: Object.values(health).filter(Boolean).length,
+      total: this.daoCache.size,
     });
 
-    this.roleRegistry = {};
-    this.daoCache.clear();
-    DatabaseFactory.reset();
-
-    logger.debug("DatabaseManager reset completed");
+    return health;
   }
 }

@@ -520,6 +520,437 @@ export abstract class BaseService<TModel = any> {
     return this.getDAO().raw<T>(query, params);
   }
 
+  // ==================== 🆕 BULK OPERATIONS ====================
+  // ==================== 🆕 BULK OPERATIONS ====================
+
+  /**
+   * Bulk upsert records - Insert if not exists, update if exists for multiple records
+   * @param dataArray - Array of data to insert or update
+   * @param searchFields - Fields to check for existence (defaults to 'id')
+   * @param useTransaction - Whether to wrap in transaction (default: true)
+   * @returns Result with created and updated records
+   * @example
+   * const result = await userService.bulkUpsert(
+   *   [{ email: 'user1@example.com', name: 'User 1' }, { email: 'user2@example.com', name: 'User 2' }],
+   *   ['email'],
+   *   true
+   * );
+   */
+  public async bulkUpsert(
+    dataArray: Partial<TModel>[],
+    searchFields: string[] = ["id"],
+    useTransaction: boolean = true
+  ): Promise<{
+    created: TModel[];
+    updated: TModel[];
+    total: number;
+    errors: Array<{ index: number; data: Partial<TModel>; error: string }>;
+  }> {
+    logger.info("Starting bulk upsert operation", {
+      entityName: this.entityName,
+      itemsCount: dataArray.length,
+      searchFields,
+      useTransaction,
+    });
+
+    await this.ensureInitialized();
+    this.lastAccess = Date.now();
+
+    try {
+      if (!Array.isArray(dataArray) || dataArray.length === 0) {
+        const errorMsg = "Data must be a non-empty array";
+        logger.error(errorMsg, {
+          entityName: this.entityName,
+          dataType: typeof dataArray,
+          dataLength: Array.isArray(dataArray) ? dataArray.length : "N/A",
+        });
+        throw new Error(errorMsg);
+      }
+
+      const result = {
+        created: [] as TModel[],
+        updated: [] as TModel[],
+        total: dataArray.length,
+        errors: [] as Array<{
+          index: number;
+          data: Partial<TModel>;
+          error: string;
+        }>,
+      };
+
+      logger.debug("Preparing bulk upsert", {
+        entityName: this.entityName,
+        searchFields,
+        itemsCount: dataArray.length,
+      });
+
+      // Process function
+      const processBulkUpsert = async () => {
+        for (let i = 0; i < dataArray.length; i++) {
+          const data = dataArray[i];
+
+          try {
+            if (i % 100 === 0) {
+              logger.trace("Bulk upsert progress", {
+                entityName: this.entityName,
+                processed: i,
+                total: dataArray.length,
+                created: result.created.length,
+                updated: result.updated.length,
+                errors: result.errors.length,
+              });
+            }
+
+            // Build conditions from specified fields
+            const conditions: QueryFilter = {};
+            let hasAllRequiredFields = true;
+
+            for (const field of searchFields) {
+              const value = (data as any)[field];
+              if (value !== undefined && value !== null) {
+                conditions[field] = value;
+              } else {
+                hasAllRequiredFields = false;
+                break;
+              }
+            }
+
+            // If we don't have all required fields, treat as insert
+            if (!hasAllRequiredFields) {
+              logger.trace(
+                "Missing required fields for item, performing insert",
+                {
+                  entityName: this.entityName,
+                  index: i,
+                  searchFields,
+                }
+              );
+
+              const processedData = await this.beforeCreate(data);
+              const created = await this.getDAO().insert<TModel>(
+                this.entityName,
+                processedData
+              );
+              result.created.push(await this.afterCreate(created));
+              continue;
+            }
+
+            // Check if record exists
+            const existingRecord = await this.getDAO().findOne<TModel>(
+              this.entityName,
+              conditions
+            );
+
+            if (existingRecord) {
+              // Record exists - perform update
+              logger.trace("Record exists, performing update", {
+                entityName: this.entityName,
+                index: i,
+              });
+
+              const processedData = await this.beforeUpdate(conditions, data);
+              await this.getDAO().update(
+                this.entityName,
+                conditions,
+                processedData
+              );
+
+              const updatedRecord = await this.getDAO().findOne<TModel>(
+                this.entityName,
+                conditions
+              );
+              if (updatedRecord) {
+                result.updated.push(updatedRecord);
+              }
+            } else {
+              // Record doesn't exist - perform insert
+              logger.trace("Record does not exist, performing insert", {
+                entityName: this.entityName,
+                index: i,
+              });
+
+              const processedData = await this.beforeCreate(data);
+              const created = await this.getDAO().insert<TModel>(
+                this.entityName,
+                processedData
+              );
+              result.created.push(await this.afterCreate(created));
+            }
+          } catch (error) {
+            logger.warn("Error processing item in bulk upsert", {
+              entityName: this.entityName,
+              index: i,
+              error: (error as Error).message,
+            });
+
+            result.errors.push({
+              index: i,
+              data,
+              error: (error as Error).message,
+            });
+          }
+        }
+      };
+
+      // Execute with or without transaction
+      if (useTransaction) {
+        logger.debug("Executing bulk upsert in transaction", {
+          entityName: this.entityName,
+          itemsCount: dataArray.length,
+        });
+
+        await this.withTransaction(async () => {
+          await processBulkUpsert();
+        });
+      } else {
+        logger.debug("Executing bulk upsert without transaction", {
+          entityName: this.entityName,
+          itemsCount: dataArray.length,
+        });
+
+        await processBulkUpsert();
+      }
+
+      logger.info("Bulk upsert completed", {
+        entityName: this.entityName,
+        total: result.total,
+        created: result.created.length,
+        updated: result.updated.length,
+        errors: result.errors.length,
+        successRate: `${(
+          ((result.created.length + result.updated.length) / result.total) *
+          100
+        ).toFixed(2)}%`,
+      });
+
+      return result;
+    } catch (error) {
+      logger.error("Error during bulk upsert operation", {
+        entityName: this.entityName,
+        itemsCount: dataArray.length,
+        error: (error as Error).message,
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Bulk insert records with optimized batch processing
+   * @param items - Array of items to insert
+   * @param batchSize - Number of items to process per batch (default: 1000)
+   * @param skipErrors - Continue processing even if some items fail (default: false)
+   * @returns Result with success/error counts
+   * @example
+   * const result = await userService.bulkInsert([
+   *   { name: 'User 1', email: 'user1@example.com' },
+   *   { name: 'User 2', email: 'user2@example.com' }
+   * ], 500, false);
+   */
+  public async bulkInsert(
+    items: Partial<TModel>[],
+    batchSize: number = 1000,
+    skipErrors: boolean = false
+  ): Promise<{
+    totalRows: number;
+    successRows: number;
+    errorRows: number;
+    errors: Array<{ index: number; data: Partial<TModel>; error: string }>;
+  }> {
+    logger.info("Starting bulk insert", {
+      entityName: this.entityName,
+      itemsCount: items.length,
+      batchSize,
+      skipErrors,
+    });
+
+    await this.ensureInitialized();
+    this.lastAccess = Date.now();
+
+    try {
+      if (!Array.isArray(items) || items.length === 0) {
+        const errorMsg = "Items must be a non-empty array";
+        logger.error(errorMsg, {
+          entityName: this.entityName,
+          itemsType: typeof items,
+          itemsLength: Array.isArray(items) ? items.length : "N/A",
+        });
+        throw new Error(errorMsg);
+      }
+
+      const result = {
+        totalRows: items.length,
+        successRows: 0,
+        errorRows: 0,
+        errors: [] as Array<{
+          index: number;
+          data: Partial<TModel>;
+          error: string;
+        }>,
+      };
+
+      logger.debug("Executing bulk insert operation", {
+        entityName: this.entityName,
+        itemsCount: items.length,
+        batchSize,
+      });
+
+      // Process in batches
+      for (let i = 0; i < items.length; i += batchSize) {
+        const batch = items.slice(i, i + batchSize);
+        const batchNumber = Math.floor(i / batchSize) + 1;
+        const totalBatches = Math.ceil(items.length / batchSize);
+
+        logger.trace("Processing batch", {
+          entityName: this.entityName,
+          batchNumber,
+          totalBatches,
+          batchSize: batch.length,
+        });
+
+        if (skipErrors) {
+          // Process each item individually if skipErrors is true
+          for (let j = 0; j < batch.length; j++) {
+            const index = i + j;
+            try {
+              const processedData = await this.beforeCreate(batch[j]);
+              await this.getDAO().insert<TModel>(
+                this.entityName,
+                processedData
+              );
+              result.successRows++;
+            } catch (error) {
+              result.errorRows++;
+              result.errors.push({
+                index,
+                data: batch[j],
+                error: (error as Error).message,
+              });
+              logger.warn("Error inserting item in bulk insert", {
+                entityName: this.entityName,
+                index,
+                error: (error as Error).message,
+              });
+            }
+          }
+        } else {
+          // Process batch as a whole
+          try {
+            const processedBatch = await Promise.all(
+              batch.map((item) => this.beforeCreate(item))
+            );
+            await this.getDAO().insertMany<TModel>(
+              this.entityName,
+              processedBatch
+            );
+            result.successRows += batch.length;
+          } catch (error) {
+            result.errorRows += batch.length;
+            logger.error("Error processing batch in bulk insert", {
+              entityName: this.entityName,
+              batchNumber,
+              error: (error as Error).message,
+            });
+            throw error;
+          }
+        }
+      }
+
+      logger.info("Bulk insert completed", {
+        entityName: this.entityName,
+        totalRows: result.totalRows,
+        successRows: result.successRows,
+        errorRows: result.errorRows,
+        successRate: `${((result.successRows / result.totalRows) * 100).toFixed(
+          2
+        )}%`,
+      });
+
+      return result;
+    } catch (error) {
+      logger.error("Error during bulk insert", {
+        entityName: this.entityName,
+        itemsCount: items.length,
+        error: (error as Error).message,
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Bulk create records with transaction support
+   * Similar to bulkInsert but always uses transaction and returns created records
+   * @param dataArray - Array of data to create
+   * @returns Array of created records
+   * @example
+   * const users = await userService.bulkCreate([
+   *   { name: 'User 1', email: 'user1@example.com' },
+   *   { name: 'User 2', email: 'user2@example.com' }
+   * ]);
+   */
+  public async bulkCreate(dataArray: Partial<TModel>[]): Promise<TModel[]> {
+    logger.info("Starting bulk create with transaction", {
+      entityName: this.entityName,
+      itemsCount: dataArray.length,
+    });
+
+    await this.ensureInitialized();
+    this.lastAccess = Date.now();
+
+    try {
+      if (!Array.isArray(dataArray) || dataArray.length === 0) {
+        const errorMsg = "Data must be a non-empty array";
+        logger.error(errorMsg, {
+          entityName: this.entityName,
+          dataType: typeof dataArray,
+          dataLength: Array.isArray(dataArray) ? dataArray.length : "N/A",
+        });
+        throw new Error(errorMsg);
+      }
+
+      const results: TModel[] = [];
+
+      logger.debug("Executing bulk create in transaction", {
+        entityName: this.entityName,
+        itemsCount: dataArray.length,
+      });
+
+      await this.withTransaction(async () => {
+        for (let i = 0; i < dataArray.length; i++) {
+          const data = dataArray[i];
+
+          if (i % 100 === 0) {
+            logger.trace("Bulk create progress", {
+              entityName: this.entityName,
+              processed: i,
+              total: dataArray.length,
+            });
+          }
+
+          const processedData = await this.beforeCreate(data);
+          const created = await this.getDAO().insert<TModel>(
+            this.entityName,
+            processedData
+          );
+          results.push(await this.afterCreate(created));
+        }
+      });
+
+      logger.info("Bulk create completed successfully", {
+        entityName: this.entityName,
+        recordsCreated: results.length,
+      });
+
+      return results;
+    } catch (error) {
+      logger.error("Error during bulk create", {
+        entityName: this.entityName,
+        itemsCount: dataArray.length,
+        error: (error as Error).message,
+      });
+      throw error;
+    }
+  }
+
   // ==================== TRANSACTION SUPPORT ====================
 
   public async beginTransaction(): Promise<Transaction> {

@@ -12,11 +12,11 @@ import {
 import { core as coreSchema } from "./schemas.sqlite";
 const dbConfig: SQLiteConfig = {
   databaseType: "sqlite",
-  database: "blog_app",
+  database: "core",
   // For File uncomment line below
-  // filename: "./blog_app.db",
+  filename: "./temp/core.db",
   // For in-memory:
-  memory: true,
+  // memory: true,
 };
 
 // ========== BƯỚC 1: Import logger utilities ==========

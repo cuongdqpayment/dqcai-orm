@@ -2,7 +2,9 @@
 // src/core/service-manager.ts
 // ========================
 import {
+  HealthReport,
   ServiceConfig,
+  ServiceHealthStatus,
   ServiceManagerEvent,
   ServiceManagerEventHandler,
   ServiceStatus,
@@ -251,6 +253,388 @@ export class ServiceManager {
     logger.trace("Checking if service exists", { schemaName, entityName, key });
 
     return this.services.has(key);
+  }
+
+  /**
+   * Kiểm tra sức khỏe của tất cả services
+   * @returns Báo cáo chi tiết về health status của từng service
+   * @example
+   * const report = await serviceManager.healthCheck();
+   * console.log(`Healthy: ${report.healthyServices}/${report.totalServices}`);
+   *
+   * // Check specific service
+   * const unhealthy = report.services.filter(s => !s.healthy);
+   * unhealthy.forEach(s => console.log(`${s.serviceKey}: ${s.error}`));
+   */
+  public async healthCheck(): Promise<HealthReport> {
+    const startTime = Date.now();
+
+    logger.info("Starting health check for all services", {
+      totalServices: this.services.size,
+    });
+
+    const services = Array.from(this.services.entries());
+
+    const healthPromises = services.map(async ([serviceKey, service]) => {
+      const checkStart = Date.now();
+      const [schemaName, entityName] = serviceKey.split(":");
+
+      try {
+        logger.trace("Checking service health", { serviceKey });
+
+        const isHealthy = await service.healthCheck();
+        const responseTime = Date.now() - checkStart;
+
+        const status = service.getStatus();
+
+        logger.trace("Service health check completed", {
+          serviceKey,
+          healthy: isHealthy,
+          responseTime,
+        });
+
+        return {
+          serviceKey,
+          schemaName,
+          entityName,
+          healthy: isHealthy,
+          timestamp: new Date().toISOString(),
+          responseTime,
+          connectionStatus: status.connectionStatus,
+        } as ServiceHealthStatus;
+      } catch (error) {
+        const responseTime = Date.now() - checkStart;
+
+        logger.warn("Service health check failed", {
+          serviceKey,
+          error: (error as Error).message,
+          responseTime,
+        });
+
+        return {
+          serviceKey,
+          schemaName,
+          entityName,
+          healthy: false,
+          error: (error as Error).message,
+          timestamp: new Date().toISOString(),
+          responseTime,
+          connectionStatus: "unknown" as const,
+        } as ServiceHealthStatus;
+      }
+    });
+
+    const results = await Promise.all(healthPromises);
+    const healthyCount = results.filter((r) => r.healthy).length;
+    const checkDuration = Date.now() - startTime;
+
+    const report: HealthReport = {
+      totalServices: results.length,
+      healthyServices: healthyCount,
+      unhealthyServices: results.length - healthyCount,
+      services: results,
+      timestamp: new Date().toISOString(),
+      overallHealth: healthyCount === results.length,
+      checkDuration,
+    };
+
+    logger.info("Health check completed", {
+      totalServices: report.totalServices,
+      healthyServices: report.healthyServices,
+      unhealthyServices: report.unhealthyServices,
+      overallHealth: report.overallHealth,
+      duration: checkDuration,
+    });
+
+    this.emit("HEALTH_CHECK_COMPLETED", {
+      serviceKey: "*",
+      schemaName: "*",
+      entityName: "*",
+      data: report,
+    });
+
+    return report;
+  }
+
+  /**
+   * Kiểm tra sức khỏe của một service cụ thể
+   * @param schemaName - Tên schema
+   * @param entityName - Tên entity
+   * @returns Health status của service hoặc null nếu không tồn tại
+   */
+  public async checkServiceHealth(
+    schemaName: string,
+    entityName: string
+  ): Promise<ServiceHealthStatus | null> {
+    const serviceKey = ServiceManager.getServiceKey(schemaName, entityName);
+
+    logger.debug("Checking health for specific service", {
+      schemaName,
+      entityName,
+      serviceKey,
+    });
+
+    const service = this.services.get(serviceKey);
+
+    if (!service) {
+      logger.warn("Service not found for health check", { serviceKey });
+      return null;
+    }
+
+    const checkStart = Date.now();
+
+    try {
+      const isHealthy = await service.healthCheck();
+      const responseTime = Date.now() - checkStart;
+      const status = service.getStatus();
+
+      logger.debug("Service health check completed", {
+        serviceKey,
+        healthy: isHealthy,
+        responseTime,
+      });
+
+      return {
+        serviceKey,
+        schemaName,
+        entityName,
+        healthy: isHealthy,
+        timestamp: new Date().toISOString(),
+        responseTime,
+        connectionStatus: status.connectionStatus as any,
+      };
+    } catch (error) {
+      const responseTime = Date.now() - checkStart;
+
+      logger.error("Service health check failed", {
+        serviceKey,
+        error: (error as Error).message,
+        responseTime,
+      });
+
+      return {
+        serviceKey,
+        schemaName,
+        entityName,
+        healthy: false,
+        error: (error as Error).message,
+        timestamp: new Date().toISOString(),
+        responseTime,
+        connectionStatus: "unknown",
+      };
+    }
+  }
+
+  /**
+   * Kiểm tra sức khỏe của tất cả services trong một schema
+   * @param schemaName - Tên schema
+   * @returns Health report cho schema cụ thể
+   */
+  public async checkSchemaHealth(schemaName: string): Promise<HealthReport> {
+    const startTime = Date.now();
+
+    logger.info("Starting schema health check", { schemaName });
+
+    const services = this.getServicesBySchema(schemaName);
+
+    if (services.length === 0) {
+      logger.warn("No services found for schema health check", { schemaName });
+
+      return {
+        totalServices: 0,
+        healthyServices: 0,
+        unhealthyServices: 0,
+        services: [],
+        timestamp: new Date().toISOString(),
+        overallHealth: true,
+        checkDuration: Date.now() - startTime,
+      };
+    }
+
+    const healthPromises = services.map(async (service) => {
+      const serviceKey = ServiceManager.getServiceKey(
+        service.getSchemaKey(),
+        service.getEntityName()
+      );
+      const checkStart = Date.now();
+
+      try {
+        const isHealthy = await service.healthCheck();
+        const responseTime = Date.now() - checkStart;
+        const status = service.getStatus();
+
+        return {
+          serviceKey,
+          schemaName: service.getSchemaKey(),
+          entityName: service.getEntityName(),
+          healthy: isHealthy,
+          timestamp: new Date().toISOString(),
+          responseTime,
+          connectionStatus: status.connectionStatus,
+        } as ServiceHealthStatus;
+      } catch (error) {
+        const responseTime = Date.now() - checkStart;
+
+        return {
+          serviceKey,
+          schemaName: service.getSchemaKey(),
+          entityName: service.getEntityName(),
+          healthy: false,
+          error: (error as Error).message,
+          timestamp: new Date().toISOString(),
+          responseTime,
+          connectionStatus: "unknown" as const,
+        } as ServiceHealthStatus;
+      }
+    });
+
+    const results = await Promise.all(healthPromises);
+    const healthyCount = results.filter((r) => r.healthy).length;
+    const checkDuration = Date.now() - startTime;
+
+    const report: HealthReport = {
+      totalServices: results.length,
+      healthyServices: healthyCount,
+      unhealthyServices: results.length - healthyCount,
+      services: results,
+      timestamp: new Date().toISOString(),
+      overallHealth: healthyCount === results.length,
+      checkDuration,
+    };
+
+    logger.info("Schema health check completed", {
+      schemaName,
+      totalServices: report.totalServices,
+      healthyServices: report.healthyServices,
+      unhealthyServices: report.unhealthyServices,
+      overallHealth: report.overallHealth,
+      duration: checkDuration,
+    });
+
+    this.emit("HEALTH_CHECK_COMPLETED", {
+      serviceKey: `${schemaName}:*`,
+      schemaName,
+      entityName: "*",
+      data: report,
+    });
+
+    return report;
+  }
+
+  /**
+   * Lấy tất cả services thuộc một schema
+   */
+  public getServicesBySchema(schemaName: string): BaseService<any>[] {
+    logger.trace("Getting services by schema", { schemaName });
+
+    const services: BaseService<any>[] = [];
+
+    for (const [key, service] of this.services.entries()) {
+      const [serviceSchemaName] = key.split(":");
+      if (serviceSchemaName === schemaName) {
+        services.push(service);
+      }
+    }
+
+    logger.debug("Services found for schema", {
+      schemaName,
+      count: services.length,
+      serviceKeys: Array.from(this.services.keys()).filter((k) =>
+        k.startsWith(`${schemaName}:`)
+      ),
+    });
+
+    return services;
+  }
+
+  /**
+   * Thực hiện transaction trên nhiều services trong cùng schema
+   * @param schemaName - Tên schema chứa các services
+   * @param callback - Function thực thi trong transaction, nhận array các services
+   * @returns Kết quả từ callback
+   * @example
+   * await serviceManager.executeSchemaTransaction('mydb', async (services) => {
+   *   // Tất cả operations trong đây sẽ được wrap trong transaction
+   *   await services[0].create({ name: 'User 1' });
+   *   await services[1].create({ title: 'Post 1' });
+   *   return { success: true };
+   * });
+   */
+  public async executeSchemaTransaction<T>(
+    schemaName: string,
+    callback: (services: BaseService<any>[]) => Promise<T>
+  ): Promise<T> {
+    logger.debug("Executing schema transaction", { schemaName });
+
+    if (this.isShuttingDown) {
+      logger.error("Cannot execute transaction during shutdown", {
+        schemaName,
+      });
+      throw new Error("ServiceManager is shutting down");
+    }
+
+    const services = this.getServicesBySchema(schemaName);
+
+    if (services.length === 0) {
+      logger.error("No services found for schema", { schemaName });
+      throw new Error(`No services found for schema: ${schemaName}`);
+    }
+
+    logger.debug("Found services for transaction", {
+      schemaName,
+      serviceCount: services.length,
+    });
+
+    try {
+      // Ensure all services are initialized
+      for (const service of services) {
+        logger.trace("Ensuring service is initialized", {
+          schemaName,
+          entityName: service.getEntityName(),
+        });
+        await service.initialize();
+      }
+
+      // Execute transaction on the first service (they share the same database)
+      const primaryService = services[0];
+
+      logger.debug("Starting transaction on primary service", {
+        schemaName,
+        primaryEntityName: primaryService.getEntityName(),
+      });
+
+      const result = await primaryService.withTransaction(async () => {
+        return await callback(services);
+      });
+
+      logger.info("Schema transaction completed successfully", {
+        schemaName,
+        serviceCount: services.length,
+      });
+
+      this.emit("TRANSACTION_COMPLETED", {
+        serviceKey: `${schemaName}:*`,
+        schemaName,
+        entityName: "*",
+      });
+
+      return result;
+    } catch (error) {
+      logger.error("Schema transaction failed", {
+        schemaName,
+        error: (error as Error).message,
+        serviceCount: services.length,
+      });
+
+      this.emit("TRANSACTION_FAILED", {
+        serviceKey: `${schemaName}:*`,
+        schemaName,
+        entityName: "*",
+        error: error as Error,
+      });
+
+      throw error;
+    }
   }
 
   public async destroyService(

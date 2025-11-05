@@ -18,7 +18,7 @@ export interface ServiceStatus {
   lastAccess: string | null;
   connectionStatus?: string;
   recordCount?: number;
-  reconnectAttempts:number;
+  reconnectAttempts: number;
 }
 
 /**
@@ -75,6 +75,7 @@ export interface HealthReport {
   services: Array<HealthCheckResult & { serviceKey: string }>;
   timestamp: string;
   overallHealth: boolean;
+  checkDuration?: number;
 }
 
 // Event types cho ServiceManager
@@ -83,13 +84,30 @@ export interface ServiceManagerEvent {
     | "SERVICE_CREATED"
     | "SERVICE_DESTROYED"
     | "SERVICE_ERROR"
-    | "HEALTH_CHECK_COMPLETED";
+    | "HEALTH_CHECK_COMPLETED"
+    | "HEALTH_CHECK_FAILED"
+    | "TRANSACTION_COMPLETED"
+    | "TRANSACTION_FAILED";
   serviceKey: string;
   schemaName: string;
   entityName: string;
   timestamp: string;
   data?: any;
   error?: Error;
+}
+
+/**
+ * Kết quả health check của một service
+ */
+export interface ServiceHealthStatus {
+  serviceKey: string;
+  schemaName: string;
+  entityName: string;
+  healthy: boolean;
+  error?: string;
+  timestamp: string;
+  responseTime?: number;
+  connectionStatus?: "connected" | "disconnected" | "unknown";
 }
 
 export type ServiceManagerEventHandler = (event: ServiceManagerEvent) => void;
