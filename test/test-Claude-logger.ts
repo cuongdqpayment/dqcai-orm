@@ -103,8 +103,13 @@ async function main() {
     // Verify config one more time
     console.log("Final config check:", CommonLoggerConfig.getCurrentConfig());
 
-    // Initialize core database
-    await DatabaseManager.getOrCreateDAO("core");
+    try {
+      await DatabaseManager.initializeSchema("core", { validateVersion: true });
+      console.log("✅ Schema initialized");
+    } catch (error) {
+      console.error("❌ Failed to initialize schema:", error);
+      throw error;
+    }
 
     // Get services
     const enterpriseService = await serviceManager.getService(
@@ -123,10 +128,13 @@ async function main() {
     // ========== TEST CRUD Operations ==========
     logger.info("🧪 Starting CRUD operations...");
 
+    const enterpriseId = crypto.randomUUID();
+    const storeId = crypto.randomUUID();
+
     // 1. Create Enterprise
     const enterprise = await enterpriseService.upsert(
       {
-        id: crypto.randomUUID(),
+        id: enterpriseId,
         name: "My Company",
         business_type: "ltd",
         email: "contact@mycompany.com",
@@ -135,11 +143,15 @@ async function main() {
       },
       ["email"]
     );
+
+    if (!enterprise || !enterprise.id) {
+      throw new Error("Failed to create enterprise");
+    }
     console.log("✅ Enterprise created:", enterprise?.name);
 
     // 2. Create Store
     const store = await storeService.upsert({
-      id: crypto.randomUUID(),
+      id: storeId,
       enterprise_id: enterprise!.id,
       name: "Main Store",
       store_type: "retail",
@@ -183,9 +195,12 @@ async function main() {
     console.log(`✅ Active stores: ${activeStores.length}`);
 
     // 5. Update
-    await userService.update(users[0].id, {
-      last_login: new Date().toISOString(),
-    });
+    await userService.update(
+      { id: users[0].id },
+      {
+        last_login: new Date().toISOString(),
+      }
+    );
     console.log("✅ User login updated");
 
     // 6. Transaction example

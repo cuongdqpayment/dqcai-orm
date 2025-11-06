@@ -258,17 +258,55 @@ export abstract class BaseService<TModel = any> {
   /**
    * Upsert - Insert nếu không tồn tại, Update nếu đã tồn tại
    * @example
-   * await userService.upsert({ email: 'user@example.com' }, { name: 'John', age: 30 });
+   * await userService.upsert({ name: 'John', age: 30 }, [name]);
+   * @param data - Dữ liệu cần insert/update
+   * @param uniqueFields - Các field dùng để check uniqueness
    */
-  public async upsert(
-    data: Partial<TModel>,
-    filter?: QueryFilter
-  ): Promise<TModel> {
-    logger.debug("Performing upsert", { entityName: this.entityName });
-    await this.ensureInitialized();
-    this.lastAccess = Date.now();
-    const processedData = await this.beforeCreate(data);
-    return this.getDAO().upsert<TModel>(this.entityName, processedData, filter);
+  async upsert<T = any>(
+    data: Partial<T>,
+    uniqueFields?: string[]
+  ): Promise<T | null> {
+    logger.debug("Performing upsert", {
+      entityName: this.entityName,
+      uniqueFields,
+    });
+
+    await this.initialize();
+
+    // ✅ Build filter từ uniqueFields
+    let filter: QueryFilter = {};
+
+    if (uniqueFields && uniqueFields.length > 0) {
+      // Lấy giá trị từ data cho các unique fields
+      for (const field of uniqueFields) {
+        if (data[field as keyof T] !== undefined) {
+          filter[field] = data[field as keyof T];
+        }
+      }
+
+      // Nếu không có giá trị nào, dùng empty filter
+      if (Object.keys(filter).length === 0) {
+        logger.warn("No values found for unique fields, upsert will insert", {
+          entityName: this.entityName,
+          uniqueFields,
+        });
+        filter = {}; // Empty filter → sẽ insert
+      }
+    }
+
+    logger.trace("Built filter from unique fields", {
+      entityName: this.entityName,
+      uniqueFields,
+      filter,
+    });
+
+    const result = await this.dao!.upsert(this.entityName, data, filter);
+
+    logger.info("Upsert completed", {
+      entityName: this.entityName,
+    });
+
+    return result as T;
   }
 
   /**

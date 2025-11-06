@@ -122,4 +122,5 @@ export interface DbFactoryOptions {
   dbConfig?: DbConfig;
   autoConnect?: boolean;
   validateSchema?: boolean;
+  autoInitializeTables: boolean;
 }

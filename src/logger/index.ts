@@ -30,6 +30,7 @@ const ORMModules = {
   SQLITE3_CONNECTION_FACTORY: "Sqlite3ConnectionFactory",
   SQLSERVER_CONNECTION_FACTORY: "SQLServerConnectionFactory",
   ORACLE_CONNECTION_FACTORY: "OracleConnectionFactory",
+  SCHEMA_VERSION_MANAGER: "SchemaVersionManager",
 };
 
 const config = new LoggerConfigBuilder()

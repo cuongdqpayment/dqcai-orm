@@ -2,7 +2,7 @@ import { DatabaseSchema, SQLITE_TYPE_MAPPING } from "../src/index";
 
 const core: DatabaseSchema = {
   version: "v1",
-  database_name: "core.db",
+  database_name: "core",
   description:
     "Cơ sở dữ liệu hệ thống cốt lõi quản lý toàn bộ hoạt động của doanh nghiệp, bao gồm thông tin doanh nghiệp, cửa hàng và người dùng",
   type_mapping: SQLITE_TYPE_MAPPING,
@@ -684,7 +684,7 @@ const core: DatabaseSchema = {
 const oms: DatabaseSchema = {
   version: "v1",
   database_type: "sqlite",
-  database_name: "oms.db",
+  database_name: "oms",
   description:
     "Xử lý đơn hàng từ nhiều kênh (tại cửa hàng, online), quản lý trạng thái và quy trình xử lý đơn hàng.",
   type_mapping: SQLITE_TYPE_MAPPING,
@@ -1139,7 +1139,7 @@ const oms: DatabaseSchema = {
 const payment: DatabaseSchema = {
   version: "v1",
   database_type: "sqlite",
-  database_name: "payment.db",
+  database_name: "payment",
   description:
     "Xử lý các giao dịch thanh toán, tích hợp với các cổng thanh toán và quản lý cấu hình liên quan.",
   type_mapping: SQLITE_TYPE_MAPPING,
@@ -1349,7 +1349,7 @@ const payment: DatabaseSchema = {
 const media: DatabaseSchema = {
   version: "v1",
   database_type: "sqlite",
-  database_name: "media.db",
+  database_name: "media",
   description:
     "Cơ sở dữ liệu quản lý hình ảnh và thư mục theo cấu trúc cây, hỗ trợ thumbnail và thiết kế multi-tenant.",
   type_mapping: {
@@ -1610,7 +1610,7 @@ const media: DatabaseSchema = {
 const product: DatabaseSchema = {
   version: "v1",
   database_type: "sqlite",
-  database_name: "product.db",
+  database_name: "product",
   description:
     "Hệ thống quản lý danh mục sản phẩm, hỗ trợ quản lý danh mục, sản phẩm, biến thể, thuộc tính, hình ảnh và đánh giá sản phẩm. Dùng để quản lý thông tin sản phẩm mà không liên quan đến tồn kho.",
   type_mapping: {
@@ -2352,7 +2352,7 @@ const product: DatabaseSchema = {
 const inventory: DatabaseSchema = {
   version: "v1",
   database_type: "sqlite",
-  database_name: "inventory.db",
+  database_name: "inventory",
   description:
     "Hệ thống quản lý tồn kho sản phẩm, hỗ trợ theo dõi nhập xuất tồn, kiểm kê, điều chỉnh tồn kho và cảnh báo hết kho.",
   type_mapping: {
@@ -3315,7 +3315,7 @@ const inventory: DatabaseSchema = {
 const fnb: DatabaseSchema = {
   version: "v1",
   database_type: "sqlite",
-  database_name: "fnb.db",
+  database_name: "fnb",
   description:
     "Module chuyên dụng cho ngành F&B, quản lý sơ đồ bàn và thông tin đặt chỗ của khách hàng.",
   type_mapping: {
@@ -3516,7 +3516,7 @@ const fnb: DatabaseSchema = {
 const scm: DatabaseSchema = {
   version: "v1",
   database_type: "sqlite",
-  database_name: "scm.db",
+  database_name: "scm",
   description:
     "Quản lý chuỗi cung ứng, bao gồm thông tin nhà cung cấp, đơn đặt hàng và quy trình nhập kho.",
   type_mapping: {
@@ -3859,7 +3859,7 @@ const scm: DatabaseSchema = {
 
 const config: DatabaseSchema = {
   version: "v1",
-  database_name: "config.db",
+  database_name: "config",
   description:
     "Cơ sở dữ liệu quản lý cấu hình hệ thống - Lưu trữ tất cả các thiết lập, tham số cấu hình, quy tắc kinh doanh và feature flags của từng cửa hàng. Hỗ trợ tùy chỉnh linh hoạt theo nhu cầu kinh doanh cụ thể của từng store mà không cần thay đổi code ứng dụng.",
   type_mapping: SQLITE_TYPE_MAPPING,
@@ -4515,7 +4515,7 @@ const config: DatabaseSchema = {
 };
 const analisys: DatabaseSchema = {
   version: "v1",
-  database_name: "analytics.db",
+  database_name: "analytics",
   description:
     "Tập trung dữ liệu để tạo báo cáo, phân tích và lưu trữ nhật ký kiểm toán (audit trail) cho toàn hệ thống.",
   type_mapping: SQLITE_TYPE_MAPPING,

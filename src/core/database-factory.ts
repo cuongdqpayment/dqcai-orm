@@ -26,9 +26,13 @@ const AdapterRegistry = new Map<
 
 /**
  * Adapter Instance Registry - Lưu trữ adapter instances đã được tạo
- * ✅ KEY: Đây là nơi lưu trữ tập trung tất cả adapter instances
  */
 const AdapterInstanceRegistry = new Map<string, IAdapter<any>>();
+
+/**
+ * ✅ NEW: Theo dõi các schema đang trong quá trình khởi tạo tables
+ */
+const InitializingSchemas = new Set<string>();
 
 /**
  * Database Factory (ENHANCED FOR ADAPTER SHARING)
@@ -329,12 +333,19 @@ export class DatabaseFactory {
     return adapter;
   }
 
+  // ==================== DAO CREATION (FIXED) ====================
+
   /**
-   * ✅ ENHANCED: Tạo UniversalDAO từ schema key với adapter sharing
+   * ✅ FIXED: Tạo UniversalDAO từ schema key với adapter sharing
+   * KHÔNG tự động gọi initializeTables() nữa
    */
   public static async createDAO(
     schemaKey: string,
-    options?: Partial<DbFactoryOptions>
+    options?: Partial<
+      DbFactoryOptions & {
+        autoInitializeTables?: boolean; // ✅ THÊM FLAG MỚI chỉ thị khi nào cần khởi tạo mới table thì đặt nó = true
+      }
+    >
   ): Promise<UniversalDAO<any>> {
     logger.info("Creating DAO with adapter sharing", {
       schemaKey,
@@ -357,7 +368,7 @@ export class DatabaseFactory {
       databaseType: schema.database_type,
     });
 
-    // 2. ✅ KEY: Lấy hoặc tạo adapter (ưu tiên adapter đã register)
+    // 2. Lấy hoặc tạo adapter
     const adapter = await this.createAdapterInstance(
       schema,
       schemaKey,
@@ -392,7 +403,7 @@ export class DatabaseFactory {
 
     logger.debug("UniversalDAO instance created", { schemaKey });
 
-    // 5. ✅ FIXED: Auto-connect chỉ khi adapter chưa connected
+    // 5. Auto-connect
     const autoConnect = options?.autoConnect !== false;
     const needsConnection = autoConnect && !adapter.isConnected();
 
@@ -412,20 +423,24 @@ export class DatabaseFactory {
       logger.debug("Auto-connect disabled, skipping connection", { schemaKey });
     }
 
-    // 6. Validate schema nếu được yêu cầu
+    // 6. Validate schema
     if (options?.validateSchema) {
       logger.debug("Validating schema", { schemaKey });
       await this.validateSchema(dao, schema);
       logger.info("Schema validation completed", { schemaKey });
     }
 
+    // ✅ FIXED: CHỈ initialize tables khi được yêu cầu EXPLICIT
+    if (options?.autoInitializeTables === true) {
+      logger.debug("Auto-initializing tables as requested", { schemaKey });
+      // Gọi initializeTablesInternal để tránh đệ quy
+      await this.initializeTablesInternal(dao, schemaKey);
+    }
+
     logger.info("DAO created successfully with shared adapter", {
       schemaKey,
       adapterShared: AdapterInstanceRegistry.get(schemaKey) === adapter,
     });
-
-    // tạo bảng nếu khởi động ban đầu hoặc lazyload
-    await this.initializeTables(schemaKey);
 
     return dao;
   }
@@ -485,174 +500,27 @@ export class DatabaseFactory {
     return adapter;
   }
 
-  // ==================== TABLE INITIALIZATION & SYNC ====================
+  // ==================== TABLE INITIALIZATION (FIXED) ====================
 
   /**
-   * ✅ Khởi tạo hoặc đồng bộ bảng dữ liệu từ schema
-   * @param schemaKey - Key của schema đã đăng ký
-   * @param entityName - Tên bảng/collection cần khởi tạo
-   * @param options - Tùy chọn khởi tạo
-   * @returns UniversalDAO đã sẵn sàng để CRUD
+   * ✅ FIXED: Internal method - Khởi tạo tables KHÔNG tạo DAO mới
    */
-  public static async initializeTable(
-    schemaKey: string,
-    entityName: string,
-    options?: {
-      forceRecreate?: boolean; // Ép tạo lại bảng (xóa và tạo mới)
-      validateSchema?: boolean; // Kiểm tra schema sau khi tạo
-      autoConnect?: boolean; // Tự động kết nối (default: true)
-      dbConfig?: DbConfig; // Config database
-      adapter?: IAdapter<any>; // Adapter đã tạo sẵn
-    }
-  ): Promise<UniversalDAO<any>> {
-    logger.info("Initializing table", {
-      schemaKey,
-      entityName,
-      forceRecreate: options?.forceRecreate || false,
-    });
-
-    // 1. Lấy schema
-    const schema = SchemaRegistry.get(schemaKey);
-    if (!schema) {
-      logger.error("Schema not found for table initialization", { schemaKey });
-      throw new Error(
-        `Schema with key '${schemaKey}' is not registered. ` +
-          `Please call DatabaseFactory.registerSchema() first.`
-      );
-    }
-
-    // 2. Kiểm tra entity có trong schema không
-    const entitySchema = schema.schemas[entityName];
-    if (!entitySchema) {
-      logger.error("Entity not found in schema", { schemaKey, entityName });
-      throw new Error(
-        `Entity '${entityName}' not found in schema '${schemaKey}'`
-      );
-    }
-
-    logger.debug("Retrieved entity schema", {
-      schemaKey,
-      entityName,
-      columnCount: entitySchema.cols.length,
-      indexCount: entitySchema.indexes?.length || 0,
-      foreignKeyCount: entitySchema.foreign_keys?.length || 0,
-    });
-
-    // 3. Tạo hoặc lấy DAO với adapter sharing
-    const dao = await this.createDAO(schemaKey, {
-      dbConfig: options?.dbConfig,
-      adapter: options?.adapter,
-      autoConnect: options?.autoConnect !== false,
-      validateSchema: false, // Không validate toàn bộ, chỉ xử lý entity cụ thể
-    });
-
-    logger.debug("DAO instance obtained", {
-      schemaKey,
-      entityName,
-      adapterConnected: dao.getAdapter().isConnected(),
-    });
-
-    // 4. Đảm bảo kết nối
-    await dao.ensureConnected();
-
-    // 5. Kiểm tra bảng đã tồn tại chưa
-    const tableExists = await dao.tableExists(entityName);
-
-    logger.debug("Table existence check", {
-      schemaKey,
-      entityName,
-      exists: tableExists,
-    });
-
-    // 6. Xử lý logic tạo/tái tạo bảng
-    if (options?.forceRecreate) {
-      // ✅ CASE 1: Ép tạo lại bảng (migration/upgrade/downgrade)
-      logger.info("Force recreate requested - dropping and recreating table", {
-        schemaKey,
-        entityName,
-      });
-
-      if (tableExists) {
-        logger.debug("Dropping existing table", { entityName });
-        await dao.dropTable(entityName);
-        logger.info("Table dropped successfully", { entityName });
-      }
-
-      logger.debug("Creating new table with full schema", { entityName });
-      await dao.createTable(entityName);
-      logger.info("Table recreated successfully", { entityName });
-    } else if (!tableExists) {
-      // ✅ CASE 2: Bảng chưa tồn tại - tạo mới
-      logger.info("Table does not exist - creating new table", {
-        schemaKey,
-        entityName,
-      });
-
-      await dao.createTable(entityName);
-      logger.info("Table created successfully", { entityName });
-    } else {
-      // ✅ CASE 3: Bảng đã tồn tại - không làm gì
-      logger.info("Table already exists - skipping creation", {
-        schemaKey,
-        entityName,
-      });
-    }
-
-    // 7. Validate schema nếu được yêu cầu
-    if (options?.validateSchema) {
-      logger.debug("Validating table structure", { entityName });
-
-      const tableInfo = await dao.getTableInfo(entityName);
-      logger.info("Table structure validated", {
-        entityName,
-        tableInfo,
-      });
-    }
-
-    logger.info("Table initialization completed successfully", {
-      schemaKey,
-      entityName,
-      wasCreated: !tableExists || options?.forceRecreate,
-    });
-
-    return dao;
-  }
-
-  /**
-   * ✅ Khởi tạo nhiều bảng cùng lúc (theo thứ tự dependency)
-   * @param schemaKey - Key của schema đã đăng ký
-   * @param entityNames - Danh sách tên bảng cần khởi tạo (optional, mặc định là tất cả)
-   * @param options - Tùy chọn khởi tạo
-   * @returns UniversalDAO đã sẵn sàng để CRUD
-   */
-  public static async initializeTables(
+  private static async initializeTablesInternal(
+    dao: UniversalDAO<any>,
     schemaKey: string,
     entityNames?: string[],
     options?: {
       forceRecreate?: boolean;
       validateSchema?: boolean;
-      autoConnect?: boolean;
-      dbConfig?: DbConfig;
-      adapter?: IAdapter<any>;
     }
-  ): Promise<UniversalDAO<any>> {
-    logger.info("Initializing multiple tables", {
+  ): Promise<void> {
+    logger.info("Initializing tables (internal)", {
       schemaKey,
       entityCount: entityNames?.length || "all",
       forceRecreate: options?.forceRecreate || false,
     });
 
-    // 1. Lấy schema
-    const schema = SchemaRegistry.get(schemaKey);
-    if (!schema) {
-      logger.error("Schema not found for tables initialization", { schemaKey });
-      throw new Error(
-        `Schema with key '${schemaKey}' is not registered. ` +
-          `Please call DatabaseFactory.registerSchema() first.`
-      );
-    }
-
-    // 2. Xác định danh sách entities cần tạo
+    const schema = dao.getSchema();
     const targetEntities = entityNames || Object.keys(schema.schemas);
 
     logger.debug("Target entities determined", {
@@ -660,19 +528,9 @@ export class DatabaseFactory {
       entities: targetEntities,
     });
 
-    // 3. Tạo DAO một lần duy nhất
-    const dao = await this.createDAO(schemaKey, {
-      dbConfig: options?.dbConfig,
-      adapter: options?.adapter,
-      autoConnect: options?.autoConnect !== false,
-      validateSchema: false,
-    });
-
     await dao.ensureConnected();
 
-    logger.debug("DAO instance ready for batch operations", { schemaKey });
-
-    // 4. Giải quyết thứ tự dependency (tương tự syncAllTables)
+    // Giải quyết dependency order
     const orderedEntities = this.resolveDependencyOrderForEntities(
       schema,
       targetEntities
@@ -683,7 +541,7 @@ export class DatabaseFactory {
       order: orderedEntities,
     });
 
-    // 5. Tạo từng bảng theo thứ tự
+    // Tạo từng bảng theo thứ tự
     for (const entityName of orderedEntities) {
       const tableExists = await dao.tableExists(entityName);
 
@@ -703,12 +561,88 @@ export class DatabaseFactory {
       }
     }
 
-    logger.info("All tables initialized successfully", {
+    logger.info("All tables initialized successfully (internal)", {
       schemaKey,
       tableCount: orderedEntities.length,
     });
+  }
 
-    return dao;
+  /**
+   * ✅ FIXED: Public method - Khởi tạo nhiều bảng (SỬ DỤNG DAO ĐÃ CÓ)
+   */
+  public static async initializeTables(
+    schemaKey: string,
+    entityNames?: string[],
+    options?: {
+      forceRecreate?: boolean;
+      validateSchema?: boolean;
+      autoConnect?: boolean;
+      dbConfig?: DbConfig;
+      adapter?: IAdapter<any>;
+    }
+  ): Promise<UniversalDAO<any>> {
+    // ✅ NGĂN CHẶN ĐỆ QUY
+    if (InitializingSchemas.has(schemaKey)) {
+      logger.warn("Already initializing tables for this schema, skipping", {
+        schemaKey,
+      });
+      // Trả về DAO hiện tại thay vì tạo mới
+      const dao = await this.createDAO(schemaKey, {
+        ...options,
+        autoInitializeTables: false, // ✅ TẮT auto-init
+      });
+      return dao;
+    }
+
+    InitializingSchemas.add(schemaKey);
+
+    try {
+      logger.info("Initializing multiple tables", {
+        schemaKey,
+        entityCount: entityNames?.length || "all",
+        forceRecreate: options?.forceRecreate || false,
+      });
+
+      // 1. Tạo DAO KHÔNG auto-initialize
+      const dao = await this.createDAO(schemaKey, {
+        dbConfig: options?.dbConfig,
+        adapter: options?.adapter,
+        autoConnect: options?.autoConnect !== false,
+        validateSchema: false,
+        autoInitializeTables: false, // ✅ QUAN TRỌNG: TẮT auto-init
+      });
+
+      // 2. Sử dụng internal method để initialize
+      await this.initializeTablesInternal(dao, schemaKey, entityNames, options);
+
+      return dao;
+    } finally {
+      InitializingSchemas.delete(schemaKey);
+    }
+  }
+
+  /**
+   * ✅ FIXED: Khởi tạo một bảng đơn lẻ
+   */
+  public static async initializeTable(
+    schemaKey: string,
+    entityName: string,
+    options?: {
+      forceRecreate?: boolean;
+      validateSchema?: boolean;
+      autoConnect?: boolean;
+      dbConfig?: DbConfig;
+      adapter?: IAdapter<any>;
+    }
+  ): Promise<UniversalDAO<any>> {
+    logger.info("Initializing single table", {
+      schemaKey,
+      entityName,
+      forceRecreate: options?.forceRecreate || false,
+    });
+
+    // Sử dụng initializeTables với single entity
+    return await this.initializeTables(schemaKey, [entityName], options);
   }
 
   /**
@@ -838,12 +772,14 @@ export class DatabaseFactory {
         schemas: SchemaRegistry.size,
         adapterClasses: AdapterRegistry.size,
         adapterInstances: AdapterInstanceRegistry.size,
+        initializing: InitializingSchemas.size,
       },
     });
 
     SchemaRegistry.clear();
     AdapterRegistry.clear();
     AdapterInstanceRegistry.clear();
+    InitializingSchemas.clear(); // ✅ THÊM
 
     logger.debug("Registries reset successfully");
   }

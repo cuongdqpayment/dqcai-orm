@@ -4,6 +4,7 @@
 
 import { UniversalDAO } from "./universal-dao";
 import { DatabaseFactory } from "./database-factory";
+import { SchemaVersionManager } from "./schema-version-manager";
 import {
   RoleRegistry,
   RoleConfig,
@@ -11,6 +12,10 @@ import {
 } from "@/types/service.types";
 import { DatabaseSchema } from "@/types/orm.types";
 import { IAdapter } from "@/interfaces/adapter.interface";
+import {
+  InitializeOptions,
+  VersionComparisonResult,
+} from "@/types/schema-version.types";
 
 import { createModuleLogger, ORMModules } from "@/logger";
 const logger = createModuleLogger(ORMModules.DATABASE_MANAGER);
@@ -179,71 +184,6 @@ export class DatabaseManager {
   }
 
   // ==================== LAZY INITIALIZATION & BULK OPERATIONS ====================
-
-  /**
-   * Initialize all available databases
-   * Khởi tạo tất cả các schema đã được đăng ký
-   */
-  public static async initializeAll(): Promise<void> {
-    logger.info("Initializing all available databases");
-
-    const availableSchemas = Array.from(DatabaseFactory.getAllSchemas().keys());
-
-    if (availableSchemas.length === 0) {
-      logger.warn("No schemas available to initialize");
-      return;
-    }
-
-    logger.debug("Available schemas for initialization", {
-      schemaCount: availableSchemas.length,
-      schemas: availableSchemas,
-    });
-
-    const failedInitializations: { key: string; error: Error }[] = [];
-
-    const initPromises = availableSchemas.map(async (key) => {
-      try {
-        logger.debug("Initializing schema", { key });
-        const dao = await this.getDAO(key);
-        await dao.ensureConnected();
-
-        logger.info("Schema initialized successfully", {
-          key,
-          isConnected: dao.getAdapter().isConnected(),
-        });
-      } catch (error) {
-        const err = error instanceof Error ? error : new Error(String(error));
-        logger.error("Failed to initialize schema", {
-          key,
-          error: err.message,
-        });
-        failedInitializations.push({ key, error: err });
-      }
-    });
-
-    await Promise.all(initPromises);
-
-    if (failedInitializations.length > 0) {
-      const errorSummary = failedInitializations
-        .map((f) => `  - ${f.key}: ${f.error.message}`)
-        .join("\n");
-
-      logger.error("Failed to initialize one or more databases", {
-        failedDatabases: failedInitializations.map((f) => f.key),
-        errorSummary,
-      });
-
-      throw new Error(
-        `Failed to initialize one or more databases:\n${errorSummary}`
-      );
-    }
-
-    logger.info("All databases initialized successfully", {
-      totalSchemas: availableSchemas.length,
-      totalConnections: this.daoCache.size,
-    });
-  }
-
   /**
    * Get database with lazy loading
    * Tự động khởi tạo connection nếu chưa tồn tại
@@ -291,6 +231,330 @@ export class DatabaseManager {
       });
       throw error;
     }
+  }
+
+  // ==================== ENHANCED INITIALIZATION WITH VERSION CONTROL ====================
+
+  /**
+   * ✅ NEW: Initialize schema với version control
+   */
+  public static async initializeSchema(
+    schemaKey: string,
+    options?: InitializeOptions
+  ): Promise<UniversalDAO<any>> {
+    logger.info("Initializing schema with version control", {
+      schemaKey,
+      validateVersion: options?.validateVersion !== false,
+    });
+
+    // 1. Lấy schema definition
+    const schema = DatabaseFactory.getSchema(schemaKey);
+    if (!schema) {
+      throw new Error(`Schema '${schemaKey}' not found`);
+    }
+
+    // 2. Tạo DAO (KHÔNG auto-initialize tables)
+    const dao = await this.getDAO(schemaKey, {
+      autoInitializeTables: false,
+      autoConnect: true,
+    });
+
+    // 3. Kiểm tra version nếu được yêu cầu
+    if (options?.validateVersion !== false) {
+      const versionResult =
+        await SchemaVersionManager.checkVersionCompatibility(dao, schema);
+
+      logger.info("Version compatibility check result", {
+        schemaKey,
+        action: versionResult.action,
+        message: versionResult.message,
+      });
+
+      // Xử lý các trường hợp
+      switch (versionResult.action) {
+        case "no_action":
+          logger.info("Schema version is up to date, skipping initialization", {
+            schemaKey,
+          });
+          return dao;
+
+        case "create_new":
+          logger.info("Creating new schema tables", { schemaKey });
+          await this.createAllTables(dao, schema);
+          await SchemaVersionManager.saveVersionInfo(
+            dao,
+            schema.database_name,
+            schema.version || "1.0.0"
+          );
+          break;
+
+        case "migration_required":
+          await this.handleMigrationRequired(
+            dao,
+            schema,
+            versionResult,
+            options
+          );
+          break;
+
+        case "version_conflict":
+          await this.handleVersionConflict(dao, schema, versionResult, options);
+          break;
+      }
+    } else {
+      // Không validate version, tạo tables trực tiếp
+      logger.debug("Version validation disabled, creating tables directly", {
+        schemaKey,
+      });
+      await this.createAllTables(dao, schema);
+    }
+
+    logger.info("Schema initialization completed", { schemaKey });
+    return dao;
+  }
+
+  /**
+   * ✅ Xử lý khi cần migration
+   */
+  private static async handleMigrationRequired(
+    dao: UniversalDAO<any>,
+    schema: DatabaseSchema,
+    versionResult: VersionComparisonResult,
+    options?: InitializeOptions
+  ): Promise<void> {
+    logger.warn("Migration required", {
+      schemaName: schema.database_name,
+      currentVersion: versionResult.currentVersion,
+      targetVersion: versionResult.targetVersion,
+    });
+
+    // Gọi callback nếu có
+    if (options?.onVersionConflict) {
+      const decision = await options.onVersionConflict(versionResult);
+
+      switch (decision) {
+        case "abort":
+          throw new Error(
+            `Migration aborted by user for schema '${schema.database_name}'`
+          );
+
+        case "migrate":
+          if (options.migrationOptions) {
+            await SchemaVersionManager.handleMigration(
+              dao,
+              schema,
+              options.migrationOptions
+            );
+            await SchemaVersionManager.saveVersionInfo(
+              dao,
+              schema.database_name,
+              schema.version || "1.0.0"
+            );
+          } else {
+            throw new Error(
+              "Migration options required for migration strategy"
+            );
+          }
+          break;
+
+        case "continue":
+          logger.warn("Continuing without migration (may cause issues)", {
+            schemaName: schema.database_name,
+          });
+          break;
+      }
+    } else {
+      // Không có callback, throw error với thông tin chi tiết
+      throw new Error(
+        `${versionResult.message}\n\n` +
+          `Để xử lý, vui lòng:\n` +
+          `1. Cung cấp callback 'onVersionConflict' trong options\n` +
+          `2. Hoặc cung cấp 'migrationOptions' để tự động xử lý`
+      );
+    }
+  }
+
+  /**
+   * ✅ Xử lý version conflict (database newer than schema)
+   */
+  private static async handleVersionConflict(
+    dao: UniversalDAO<any>,
+    schema: DatabaseSchema,
+    versionResult: VersionComparisonResult,
+    options?: InitializeOptions
+  ): Promise<void> {
+    logger.error("Version conflict detected", {
+      schemaName: schema.database_name,
+      currentVersion: versionResult.currentVersion,
+      targetVersion: versionResult.targetVersion,
+    });
+
+    if (options?.onVersionConflict) {
+      const decision = await options.onVersionConflict(versionResult);
+
+      if (decision === "migrate" && options.migrationOptions) {
+        // Force downgrade (NGUY HIỂM)
+        logger.warn("Force downgrade requested - THIS MAY CAUSE DATA LOSS", {
+          schemaName: schema.database_name,
+        });
+
+        await SchemaVersionManager.handleMigration(
+          dao,
+          schema,
+          options.migrationOptions
+        );
+
+        await SchemaVersionManager.saveVersionInfo(
+          dao,
+          schema.database_name,
+          schema.version || "1.0.0"
+        );
+      } else {
+        throw new Error(
+          `Version conflict cannot be resolved for schema '${schema.database_name}'`
+        );
+      }
+    } else {
+      throw new Error(versionResult.message);
+    }
+  }
+
+  /**
+   * ✅ Helper: Tạo tất cả tables trong schema
+   */
+  private static async createAllTables(
+    dao: UniversalDAO<any>,
+    schema: DatabaseSchema
+  ): Promise<void> {
+    logger.info("Creating all tables in schema", {
+      schemaName: schema.database_name,
+      tableCount: Object.keys(schema.schemas).length,
+    });
+
+    // ✅ FIX: Tìm schema key thực tế thay vì dùng database_name
+    const schemaKey = Array.from(
+      DatabaseFactory.getAllSchemas().entries()
+    ).find(([_, s]) => s === schema)?.[0];
+
+    if (!schemaKey) {
+      throw new Error(
+        `Cannot find schema key for database ${schema.database_name}`
+      );
+    }
+
+    // Sử dụng DatabaseFactory để tạo tables với dependency resolution
+    await DatabaseFactory.initializeTables(
+      schemaKey,
+      undefined, // Tạo tất cả tables
+      {
+        forceRecreate: false,
+        adapter: dao.getAdapter(),
+      }
+    );
+
+    logger.info("All tables created successfully", {
+      schemaName: schema.database_name,
+    });
+  }
+
+  /**
+   * ✅ NEW: Initialize tất cả schemas với version control
+   */
+  public static async initializeAll(
+    options?: InitializeOptions
+  ): Promise<void> {
+    logger.info("Initializing all schemas with version control");
+
+    const schemas = Array.from(DatabaseFactory.getAllSchemas().keys());
+
+    if (schemas.length === 0) {
+      logger.warn("No schemas available to initialize");
+      return;
+    }
+
+    const failed: { key: string; error: Error }[] = [];
+
+    for (const schemaKey of schemas) {
+      try {
+        await this.initializeSchema(schemaKey, options);
+      } catch (error) {
+        const err = error instanceof Error ? error : new Error(String(error));
+        logger.error("Failed to initialize schema", {
+          schemaKey,
+          error: err.message,
+        });
+        failed.push({ key: schemaKey, error: err });
+      }
+    }
+
+    if (failed.length > 0) {
+      const summary = failed
+        .map((f) => `  - ${f.key}: ${f.error.message}`)
+        .join("\n");
+      throw new Error(`Failed to initialize schemas:\n${summary}`);
+    }
+
+    logger.info("All schemas initialized successfully", {
+      totalSchemas: schemas.length,
+    });
+  }
+
+  /**
+   * ✅ NEW: Kiểm tra version của schema
+   */
+  public static async checkSchemaVersion(
+    schemaKey: string
+  ): Promise<VersionComparisonResult> {
+    logger.info("Checking schema version", { schemaKey });
+
+    const schema = DatabaseFactory.getSchema(schemaKey);
+    if (!schema) {
+      throw new Error(`Schema '${schemaKey}' not found`);
+    }
+
+    const dao = await this.getDAO(schemaKey, {
+      autoInitializeTables: false,
+      autoConnect: true,
+    });
+
+    return await SchemaVersionManager.checkVersionCompatibility(dao, schema);
+  }
+
+  /**
+   * ✅ NEW: Lấy version info của schema
+   */
+  public static async getSchemaVersionInfo(schemaKey: string) {
+    logger.info("Getting schema version info", { schemaKey });
+
+    const dao = await this.getDAO(schemaKey, {
+      autoInitializeTables: false,
+      autoConnect: true,
+    });
+
+    const schema = dao.getSchema();
+    return await SchemaVersionManager.getCurrentVersion(
+      dao,
+      schema.database_name
+    );
+  }
+
+  /**
+   * ✅ NEW: Backup schema
+   */
+  public static async backupSchema(
+    schemaKey: string,
+    backupPath?: string
+  ): Promise<string> {
+    logger.info("Creating schema backup", { schemaKey, backupPath });
+
+    const dao = await this.getDAO(schemaKey);
+    const schema = dao.getSchema();
+
+    return await SchemaVersionManager.backupSchema(
+      dao,
+      schema.database_name,
+      backupPath
+    );
   }
 
   // ==================== ENHANCED CONNECTION CLOSING ====================

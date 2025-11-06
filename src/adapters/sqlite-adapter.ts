@@ -210,6 +210,7 @@ export class SQLiteAdapter extends BaseAdapter {
    * ✅ SQLITE: Xử lý kết quả INSERT
    * SQLite không hỗ trợ RETURNING, phải query lại
    */
+  // sqlite-adapter.ts
   protected async processInsertResult(
     tableName: string,
     result: any,
@@ -223,36 +224,156 @@ export class SQLiteAdapter extends BaseAdapter {
 
     const lastInsertId = result.lastInsertId || result.lastInsertRowid;
 
-    if (!lastInsertId) {
-      logger.warn("No last insert ID available, returning original data");
-      return data; // Fallback nếu không có ID
+    // ✅ IMPROVED: Tự động detect PRIMARY KEY từ data
+    let pkField: string;
+
+    if (primaryKeys && primaryKeys.length > 0) {
+      pkField = primaryKeys[0];
+    } else {
+      // ✅ Tìm PK trong data (ưu tiên các pattern phổ biến)
+      const possiblePKs = Object.keys(data).filter((key) => {
+        const lowerKey = key.toLowerCase();
+        return (
+          lowerKey === "id" ||
+          lowerKey.endsWith("_id") ||
+          lowerKey.endsWith("_name") ||
+          lowerKey.endsWith("_code") ||
+          lowerKey.includes("primary")
+        );
+      });
+
+      if (possiblePKs.length > 0) {
+        pkField = possiblePKs[0];
+        logger.debug("Auto-detected primary key from data", {
+          tableName,
+          pkField,
+          possibleKeys: possiblePKs,
+        });
+      } else {
+        // Fallback: dùng key đầu tiên
+        pkField = Object.keys(data)[0] || "id";
+        logger.warn("Could not detect primary key, using first field", {
+          tableName,
+          pkField,
+        });
+      }
     }
 
-    // Query lại bản ghi vừa insert
-    const pkField = primaryKeys?.[0] || "id";
-    const query = `SELECT * FROM ${QueryHelper.quoteIdentifier(
-      tableName,
-      this.type
-    )} WHERE ${QueryHelper.quoteIdentifier(pkField, this.type)} = ?`;
+    const pkValue = data[pkField];
 
-    logger.trace("Executing select query for inserted record", {
-      pkField,
-      lastInsertId,
-    });
+    // ✅ CASE 1: Không có lastInsertId (ví dụ: UUID, string PK)
+    if (!lastInsertId) {
+      logger.debug("No lastInsertId, using data value", {
+        tableName,
+        pkField,
+        pkValue,
+      });
 
-    const selectResult = await this.executeRaw(query, [lastInsertId]);
-    const insertedRecord = selectResult.rows?.[0] || {
-      ...data,
-      [pkField]: lastInsertId,
-    };
+      if (pkValue !== undefined) {
+        try {
+          const query = `SELECT * FROM ${QueryHelper.quoteIdentifier(
+            tableName,
+            this.type
+          )} WHERE ${QueryHelper.quoteIdentifier(pkField, this.type)} = ?`;
 
-    logger.trace("Insert result processed", {
-      tableName,
-      pkField,
-      lastInsertId,
-    });
+          logger.trace("Querying inserted record by data PK", {
+            pkField,
+            pkValue,
+          });
 
-    return insertedRecord;
+          const selectResult = await this.executeRaw(query, [pkValue]);
+          return selectResult.rows?.[0] || data;
+        } catch (error) {
+          logger.warn(
+            "Failed to query inserted record, returning original data",
+            {
+              tableName,
+              error: (error as Error).message,
+            }
+          );
+          return data;
+        }
+      }
+
+      logger.warn("No PK value in data, returning original data", {
+        tableName,
+      });
+      return data;
+    }
+
+    // ✅ CASE 2: Có lastInsertId NHƯNG PK là string (như UUID)
+    // → Không thể dùng lastInsertId để query
+    if (typeof pkValue === "string" && pkValue !== String(lastInsertId)) {
+      logger.debug(
+        "PK is string type, using data value instead of lastInsertId",
+        {
+          tableName,
+          pkField,
+          pkValue,
+          lastInsertId,
+        }
+      );
+
+      try {
+        const query = `SELECT * FROM ${QueryHelper.quoteIdentifier(
+          tableName,
+          this.type
+        )} WHERE ${QueryHelper.quoteIdentifier(pkField, this.type)} = ?`;
+
+        logger.trace("Querying inserted record by data PK (string)", {
+          pkField,
+          pkValue,
+        });
+
+        const selectResult = await this.executeRaw(query, [pkValue]);
+        return selectResult.rows?.[0] || data;
+      } catch (error) {
+        logger.warn(
+          "Failed to query inserted record, returning original data",
+          {
+            tableName,
+            error: (error as Error).message,
+          }
+        );
+        return data;
+      }
+    }
+
+    // ✅ CASE 3: Có lastInsertId VÀ PK là numeric → Dùng lastInsertId
+    try {
+      const query = `SELECT * FROM ${QueryHelper.quoteIdentifier(
+        tableName,
+        this.type
+      )} WHERE ${QueryHelper.quoteIdentifier(pkField, this.type)} = ?`;
+
+      logger.trace("Querying inserted record by lastInsertId", {
+        pkField,
+        lastInsertId,
+      });
+
+      const selectResult = await this.executeRaw(query, [lastInsertId]);
+      const insertedRecord = selectResult.rows?.[0] || {
+        ...data,
+        [pkField]: lastInsertId,
+      };
+
+      logger.trace("Insert result processed", {
+        tableName,
+        pkField,
+        lastInsertId,
+      });
+
+      return insertedRecord;
+    } catch (error) {
+      logger.warn("Failed to query by lastInsertId, returning data with ID", {
+        tableName,
+        error: (error as Error).message,
+      });
+      return {
+        ...data,
+        [pkField]: lastInsertId,
+      };
+    }
   }
 
   /**
