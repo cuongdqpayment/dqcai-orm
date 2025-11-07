@@ -1,16 +1,20 @@
 // ========================
-// src/adapters/mariadb-adapter.ts - FIXED
+// src/adapters/mariadb-adapter.ts
 // ========================
 
-import { DatabaseType, IConnection } from "../types/orm.types";
+import { DatabaseType, IConnection } from "@/types/orm.types";
 import { MySQLAdapter } from "./mysql-adapter";
-import { createModuleLogger, ORMModules } from "../logger";
-import { MariaDBConfig } from "../types";
+import { createModuleLogger, ORMModules } from "@/logger";
+import { MariaDBConfig } from "@/types/database-config-types";
 const logger = createModuleLogger(ORMModules.MARIADB_ADAPTER);
 
 export class MariaDBAdapter extends MySQLAdapter {
   type: DatabaseType = "mariadb";
   databaseType: DatabaseType = "mariadb";
+
+  constructor(config: MariaDBConfig) {
+    super(config);
+  }
 
   isSupported(): boolean {
     if (this.isConnected()) {
@@ -36,7 +40,9 @@ export class MariaDBAdapter extends MySQLAdapter {
     }
   }
 
-  async connect(config: MariaDBConfig): Promise<IConnection> {
+  async connect(schemaKey?: string): Promise<IConnection> {
+    if (!this.dbConfig) throw Error("No database configuration provided.");
+    const config = this.dbConfig as MariaDBConfig;
     logger.debug("Connecting to MariaDB", {
       database: config.database,
       host: config.host || "localhost",

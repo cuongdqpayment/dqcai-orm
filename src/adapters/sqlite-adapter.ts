@@ -1,8 +1,8 @@
 // ========================
-// src/adapters/sqlite-adapter.ts (REFACTORED)
+// src/adapters/sqlite-adapter.ts
 // ========================
 
-import { BaseAdapter } from "../core/base-adapter";
+import { BaseAdapter } from "@/core/base-adapter";
 import {
   DatabaseType,
   EntitySchemaDefinition,
@@ -11,17 +11,20 @@ import {
   IConnection,
   IndexDefinition,
   SchemaDefinition,
-} from "../types/orm.types";
-import { QueryHelper } from "../utils/query-helper";
-import { createModuleLogger, ORMModules } from "../logger";
-import { SQLiteConfig } from "../types";
-import { log } from "console";
+} from "@/types/orm.types";
+import { QueryHelper } from "@/utils/query-helper";
+import { createModuleLogger, ORMModules } from "@/logger";
+import { SQLiteConfig } from "@/types/database-config-types";
 const logger = createModuleLogger(ORMModules.SQLITE_ADAPTER);
 
 export class SQLiteAdapter extends BaseAdapter {
   type: DatabaseType = "sqlite";
   databaseType: DatabaseType = "sqlite";
   private db: any = null;
+
+  constructor(config: SQLiteConfig) {
+    super(config);
+  }
 
   /*
   Chuyển 2 hàm isSupported và connect về luôn Adapter, không cần tạo connection nữa
@@ -47,7 +50,10 @@ export class SQLiteAdapter extends BaseAdapter {
     }
   }
 
-  async connect(config: SQLiteConfig): Promise<IConnection> {
+  async connect(schemaKey?: string): Promise<IConnection> {
+    if (!this.dbConfig) throw Error("No database configuration provided.");
+    const config = this.dbConfig as SQLiteConfig;
+
     logger.debug("Connecting to SQLite", {
       database: config.database,
       memory: config.memory,
@@ -58,10 +64,11 @@ export class SQLiteAdapter extends BaseAdapter {
       logger.trace("Dynamically importing better-sqlite3");
 
       const Database = (await import("better-sqlite3")).default;
+      // ưu tiên tên khai ở config đến key của schema, nếu không có thì lấy tên database
       const filename = config.memory
         ? ":memory:"
         : config.filename ||
-          `${config.dbDirectory || "."}/${config.database || "database"}.db`;
+          `${config.dbDirectory || "."}/${config.database|| schemaKey || "database"}.db`;
 
       logger.trace("Creating SQLite database", { filename });
 
@@ -526,10 +533,7 @@ export class SQLiteAdapter extends BaseAdapter {
   // ==========================================
   // OVERRIDE DLL methodes
   // ==========================================
-
-  // Trong file: sqlite-adapter.ts
   // Override createTable để xử lý foreign keys đúng cách cho SQLite
-
   async createTable(
     tableName: string,
     schema: SchemaDefinition,

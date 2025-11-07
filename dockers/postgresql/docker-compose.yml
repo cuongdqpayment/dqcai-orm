@@ -11,6 +11,8 @@ services:
       POSTGRES_USER: cuongdq
       POSTGRES_PASSWORD: Cng3500888@
       POSTGRES_DB: test
+      TZ: Asia/Ho_Chi_Minh
+      PGTZ: Asia/Ho_Chi_Minh 
       
     # Ánh xạ cổng (Host:Container)
     # Cổng 5432 trên máy Windows của bạn sẽ kết nối tới 5432 trong container

@@ -30,8 +30,9 @@ export class UniversalDAO<TConnection extends IConnection = IConnection>
   protected adapter: IAdapter<TConnection>;
   protected connection: TConnection | null = null;
   public readonly schema: DatabaseSchema;
-  public readonly databaseType: DatabaseType = "sqlite";
+  public readonly databaseType: DatabaseType;
   public readonly dbConfig: DbConfig;
+  protected schemaKey?: string;
 
   // Reconnection tracking
   private reconnectAttempts: number = 0;
@@ -41,7 +42,8 @@ export class UniversalDAO<TConnection extends IConnection = IConnection>
   constructor(
     adapter: IAdapter<TConnection>,
     schema: DatabaseSchema,
-    dbConfig: DbConfig
+    dbConfig: DbConfig,
+    schemaKey?: string
   ) {
     logger.debug("Creating UniversalDAO instance", {
       databaseName: schema.database_name,
@@ -49,9 +51,10 @@ export class UniversalDAO<TConnection extends IConnection = IConnection>
     });
 
     this.adapter = adapter;
+    this.databaseType = adapter.databaseType;
     this.schema = schema;
-    this.databaseType = schema.database_type || "sqlite";
     this.dbConfig = dbConfig;
+    this.schemaKey = schemaKey;
   }
 
   // ==================== CONNECTION MANAGEMENT ====================
@@ -88,7 +91,7 @@ export class UniversalDAO<TConnection extends IConnection = IConnection>
       let lastError: Error | null = null;
       for (let attempt = 0; attempt < this.maxReconnectAttempts; attempt++) {
         try {
-          this.connection = await this.adapter.connect(this.dbConfig);
+          this.connection = await this.adapter.connect(this.schemaKey);
           this.reconnectAttempts = 0;
           logger.info("Connected successfully");
           return this.connection;
@@ -377,7 +380,7 @@ export class UniversalDAO<TConnection extends IConnection = IConnection>
       }
     }
 
-    // ✅ 1. Tạo table với columns
+    // ✅ 1. Tạo table với columns + foreign_keys include 
     await this.adapter.createTable(entityName, schemaDefinition, foreignKeys);
     logger.info("Table structure created", { entityName });
 
@@ -401,46 +404,7 @@ export class UniversalDAO<TConnection extends IConnection = IConnection>
         }
       }
     }
-
-    // ✅ 3. Tạo foreign keys (nếu có và adapter hỗ trợ)
-    if (foreignKeys.length > 0) {
-      logger.info("Creating foreign keys", {
-        entityName,
-        count: foreignKeys.length,
-      });
-
-      for (const fkDef of foreignKeys) {
-        try {
-          // ⚠️ SQLite không hỗ trợ ALTER TABLE ADD FOREIGN KEY
-          // Foreign keys phải được định nghĩa trong CREATE TABLE
-          if (this.databaseType === "sqlite") {
-            // bỏ qua cảnh báo vì sqlite sẽ không tạo foreignKey độc lập
-            // logger.warn(
-            //   "SQLite foreign keys must be defined during table creation",
-            //   {
-            //     entityName,
-            //     foreignKeyName: fkDef.name,
-            //   }
-            // );
-            continue;
-          }
-
-          await this.adapter.createForeignKey(entityName, fkDef);
-          logger.debug("Foreign key created successfully", {
-            entityName,
-            foreignKeyName: fkDef.name,
-          });
-        } catch (error) {
-          logger.error("Failed to create foreign key", {
-            entityName,
-            foreignKeyName: fkDef.name,
-            error: (error as Error).message,
-          });
-          // Không throw, tiếp tục tạo các foreign key khác
-        }
-      }
-    }
-
+    
     logger.info("Table created with full schema", {
       entityName,
       indexCount: indexes.length,

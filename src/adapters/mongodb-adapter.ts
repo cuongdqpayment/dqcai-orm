@@ -1,8 +1,8 @@
 // ========================
-// src/adapters/mongodb-adapter.ts (IMPROVED FROM @dqcai/mongo)
+// src/adapters/mongodb-adapter.ts
 // ========================
 
-import { BaseAdapter } from "../core/base-adapter";
+import { BaseAdapter } from "@/core/base-adapter";
 import {
   DatabaseType,
   EntitySchemaDefinition,
@@ -14,9 +14,9 @@ import {
   QueryOptions,
   SchemaDefinition,
   Transaction,
-} from "../types/orm.types";
-import { createModuleLogger, ORMModules } from "../logger";
-import { MongoDBConfig } from "../types";
+} from "@/types/orm.types";
+import { createModuleLogger, ORMModules } from "@/logger";
+import { MongoDBConfig } from "@/types/database-config-types";
 const logger = createModuleLogger(ORMModules.MONGODB_ADAPTER);
 
 /**
@@ -34,6 +34,10 @@ export class MongoDBAdapter extends BaseAdapter {
   private client: any = null;
   private db: any = null;
   private ObjectId: any = null;
+
+  constructor(config: MongoDBConfig) {
+    super(config);
+  }
 
   /*
   Chuyển 2 hàm isSupported và connect về luôn Adapter, không cần tạo connection nữa
@@ -58,7 +62,10 @@ export class MongoDBAdapter extends BaseAdapter {
     }
   }
 
-  async connect(config: MongoDBConfig): Promise<IConnection> {
+  async connect(schemaKey?: string): Promise<IConnection> {
+    if (!this.dbConfig) throw Error("No database configuration provided.");
+    const config = this.dbConfig as MongoDBConfig;
+
     logger.debug("Connecting to MongoDB", {
       database: config.database,
       host: config.host || "localhost",
@@ -430,7 +437,6 @@ export class MongoDBAdapter extends BaseAdapter {
 
   async getForeignKeys(tableName: string): Promise<ForeignKeyInfo[]> {
     logger.trace("Getting foreign keys (MongoDB)", { collection: tableName });
-
     // MongoDB không có foreign keys
     return [];
   }

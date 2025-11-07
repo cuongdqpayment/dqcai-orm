@@ -2,7 +2,7 @@
 // src/adapters/oracle-adapter.ts (REFACTORED)
 // ========================
 
-import { BaseAdapter } from "../core/base-adapter";
+import { BaseAdapter } from "@/core/base-adapter";
 import {
   DatabaseType,
   EntitySchemaDefinition,
@@ -12,17 +12,21 @@ import {
   IConnection,
   IndexDefinition,
   SchemaDefinition,
-} from "../types/orm.types";
-import { QueryHelper } from "../utils/query-helper";
-import { createModuleLogger, ORMModules } from "../logger";
-import { OracleConfig } from "../types";
+} from "@/types/orm.types";
+import { QueryHelper } from "@/utils/query-helper";
+import { createModuleLogger, ORMModules } from "@/logger";
+import { OracleConfig } from "@/types/database-config-types";
 const logger = createModuleLogger(ORMModules.ORACLE_ADAPTER);
 
 export class OracleAdapter extends BaseAdapter {
-  type: DatabaseType = "oracle" as DatabaseType;
-  databaseType: DatabaseType = "oracle" as DatabaseType;
+  type: DatabaseType = "oracle";
+  databaseType: DatabaseType = "oracle";
   private oracledb: any = null;
   private pool: any = null;
+
+  constructor(config: OracleConfig) {
+    super(config);
+  }
 
   /*
   Chuyển 2 hàm isSupported và connect về luôn Adapter, không cần tạo connection nữa
@@ -47,7 +51,10 @@ export class OracleAdapter extends BaseAdapter {
     }
   }
 
-  async connect(config: OracleConfig): Promise<IConnection> {
+  async connect(schemaKey?: string): Promise<IConnection> {
+    if (!this.dbConfig) throw Error("No database configuration provided.");
+    const config = this.dbConfig as OracleConfig;
+
     logger.debug("Connecting to Oracle", {
       database: config.database,
       host: config.host || "localhost",
@@ -441,24 +448,25 @@ export class OracleAdapter extends BaseAdapter {
   }
 
   // ==========================================
-  // ORACLE-SPECIFIC: CREATE TABLE WITH SEQUENCES
+  // ORACLE-SPECIFIC: CREATE TABLE WITH SEQUENCES & FOREIGN KEYS
   // ==========================================
-
   async createTable(
     tableName: string,
-    schema: SchemaDefinition
+    schema: SchemaDefinition,
+    foreignKeys?: ForeignKeyDefinition[] // ✅ THÊM tham số này
   ): Promise<void> {
-    logger.debug("Creating table", {
+    logger.debug("Creating Oracle table with foreign keys", {
       tableName,
       schemaKeys: Object.keys(schema),
+      foreignKeyCount: foreignKeys?.length || 0,
     });
 
     this.ensureConnected();
     const columns: string[] = [];
-    const constraints: string[] = [];
     let sequenceName: string | null = null;
     let autoIncrementColumn: string | null = null;
 
+    // ✅ Build columns
     for (const [fieldName, fieldDef] of Object.entries(schema)) {
       const columnDef = this.buildOracleColumnDefinition(fieldName, fieldDef);
       columns.push(columnDef);
@@ -467,19 +475,25 @@ export class OracleAdapter extends BaseAdapter {
         autoIncrementColumn = fieldName;
         sequenceName = `${tableName}_${fieldName}_seq`;
       }
-
-      if (fieldDef.references) {
-        constraints.push(this.buildForeignKeyConstraint(fieldName, fieldDef));
-      }
     }
 
+    // ✅ Build inline foreign key constraints (giống các adapter khác)
+    const constraints = this.buildInlineConstraints(
+      tableName,
+      foreignKeys || []
+    );
+
+    // ✅ Combine columns và constraints
     const allColumns = [...columns, ...constraints].join(", ");
+
     const createTableQuery = `CREATE TABLE ${QueryHelper.quoteIdentifier(
       tableName,
       this.type
     )} (${allColumns})`;
+
     await this.raw(createTableQuery);
 
+    // ✅ Tạo sequence và trigger cho auto-increment (giữ nguyên logic cũ)
     if (autoIncrementColumn && sequenceName) {
       await this.createAutoIncrementSequence(
         tableName,
@@ -488,7 +502,10 @@ export class OracleAdapter extends BaseAdapter {
       );
     }
 
-    logger.info("Table created successfully", { tableName });
+    logger.info("Oracle table created with foreign keys", {
+      tableName,
+      foreignKeyCount: constraints.length,
+    });
   }
 
   async dropTable(tableName: string): Promise<void> {

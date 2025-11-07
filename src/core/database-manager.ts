@@ -80,23 +80,33 @@ export class DatabaseManager {
 
   // ==================== ADAPTER MANAGEMENT ====================
 
-  public static registerAdapterInstance(
+  /**
+   * Đăng ký schemaKey=schemaName cho adapter
+   * nếu của sqlite thì sẽ dùng schemaKey làm tên file
+   * @param schemaKey
+   * @param adapter
+   */
+  public static async registerAdapterInstance(
     schemaKey: string,
     adapter: IAdapter<any>
-  ): void {
+  ): Promise<void> {
     logger.debug("Registering adapter instance via DatabaseManager", {
       schemaKey,
       isConnected: adapter.isConnected(),
     });
 
-    DatabaseFactory.registerAdapterInstance(schemaKey, adapter);
+    if (!adapter.isConnected()) {
+      logger.debug("Adapter not connected, will auto-connect", { schemaKey });
+      await adapter.connect(schemaKey);
+      logger.debug("✓ Database connected");
+    }
 
+    DatabaseFactory.registerAdapterInstance(schemaKey, adapter);
     const existingDAO = this.daoCache.get(schemaKey);
     if (existingDAO) {
       logger.debug("Updating existing DAO with new adapter", { schemaKey });
       (existingDAO as any).adapter = adapter;
     }
-
     logger.info("Adapter instance registered and synchronized", { schemaKey });
   }
 

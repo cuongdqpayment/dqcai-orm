@@ -24,6 +24,11 @@ import { createModuleLogger, ORMModules } from "../logger";
 const logger = createModuleLogger(ORMModules.BASE_ADAPTER);
 
 export abstract class BaseAdapter implements IAdapter {
+  protected dbConfig: DbConfig;
+  constructor(config: DbConfig) {
+    this.dbConfig = config;
+  }
+
   createForeignKey(
     tableName: string,
     foreignKeyDef: ForeignKeyDefinition
@@ -94,7 +99,7 @@ export abstract class BaseAdapter implements IAdapter {
     );
   }
 
-  async connect(config: DbConfig): Promise<IConnection> {
+  async connect(schemaKey?: string): Promise<IConnection> {
     throw new Error("Connect method must be implemented by DatabaseAdapter");
   }
 
@@ -136,6 +141,10 @@ export abstract class BaseAdapter implements IAdapter {
     return this.connection;
   }
 
+  getDbConfig(): DbConfig | null {
+    return this.config;
+  }
+
   protected ensureConnected(): void {
     if (!this.isConnected()) {
       logger.error("Database connection not established", { type: this.type });
@@ -161,6 +170,20 @@ export abstract class BaseAdapter implements IAdapter {
     return constraints;
   }
 
+  /**
+   * Phương thức này hỗ trợ được cho các cơ sở dữ liệu:
+   * mysql,
+   * maria,
+   * sqlserver,
+   * postgresql
+   * đều giống cùng câu lệnh tạo bảng kèm foreignkey
+   * Riêng đối với SQLITE thì phải sử dụng thêm cờ PRAGMA foreign_keys = ON đúng cách nên phải overide để xử lý riêng
+   * Riêng đối với ORACLE cũng sẽ có khác biệt về tạo bảng nên cũng phải overide hàm này xử lý riêng
+   *
+   * @param tableName
+   * @param schema
+   * @param foreignKeys
+   */
   async createTable(
     tableName: string,
     schema: SchemaDefinition,

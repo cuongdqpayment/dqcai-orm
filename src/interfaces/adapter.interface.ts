@@ -23,15 +23,16 @@ import {
  */
 export interface IAdapter<TConnection extends IConnection = IConnection> {
   type: DatabaseType;
-  databaseType: DatabaseType; // Alias for type
+  databaseType: DatabaseType;
 
   // Connection Management
-  connect(config: DbConfig): Promise<TConnection>;
+  connect(schemaKey?: string): Promise<TConnection>;
   disconnect(): Promise<void>;
   disconnectAll(): Promise<void>;
   isConnected(): boolean;
   isSupported(): boolean;
   getConnection(): TConnection | null;
+  getDbConfig(): DbConfig | null;
 
   // Schema Management
   createTable(

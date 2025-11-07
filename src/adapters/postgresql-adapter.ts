@@ -1,8 +1,8 @@
 // ========================
-// src/adapters/postgresql-adapter.ts (FIXED)
+// src/adapters/postgresql-adapter.ts
 // ========================
 
-import { BaseAdapter } from "../core/base-adapter";
+import { BaseAdapter } from "@/core/base-adapter";
 import {
   DatabaseType,
   EntitySchemaDefinition,
@@ -11,16 +11,20 @@ import {
   IConnection,
   IndexDefinition,
   SchemaDefinition,
-} from "../types/orm.types";
-import { QueryHelper } from "../utils/query-helper";
-import { createModuleLogger, ORMModules } from "../logger";
-import { PostgreSQLConfig } from "../types";
+} from "@/types/orm.types";
+import { QueryHelper } from "@/utils/query-helper";
+import { createModuleLogger, ORMModules } from "@/logger";
+import { PostgreSQLConfig } from "@/types/database-config-types";
 const logger = createModuleLogger(ORMModules.POSTGRESQL_ADAPTER);
 
 export class PostgreSQLAdapter extends BaseAdapter {
   type: DatabaseType = "postgresql";
   databaseType: DatabaseType = "postgresql";
   private pool: any = null;
+
+  constructor(config: PostgreSQLConfig) {
+    super(config);
+  }
 
   isSupported(): boolean {
     if (this.pool || this.isConnected()) {
@@ -39,7 +43,14 @@ export class PostgreSQLAdapter extends BaseAdapter {
     }
   }
 
-  async connect(config: PostgreSQLConfig): Promise<IConnection> {
+  // ==========================================
+  // POSTGRESQL-SPECIFIC: AUTO CREATE DATABASE
+  // ==========================================
+
+  async connect(schemaKey?: string): Promise<IConnection> {
+    if (!this.dbConfig) throw Error("No database configuration provided.");
+    const config = this.dbConfig as PostgreSQLConfig;
+
     logger.debug("Connecting to PostgreSQL", {
       database: config.database,
       host: config.host || "localhost",
@@ -50,7 +61,48 @@ export class PostgreSQLAdapter extends BaseAdapter {
       logger.trace("Dynamically importing 'pg' module");
       const { Pool } = await import("pg");
 
-      logger.trace("Creating PostgreSQL Pool instance");
+      // ✅ BƯỚC 1: Kết nối vào database mặc định để kiểm tra
+      logger.trace("Checking if target database exists");
+      const checkPool = new Pool({
+        ...config,
+        database: "postgres", // ⚠️ Kết nối vào DB mặc định
+      } as any);
+
+      try {
+        // Kiểm tra database có tồn tại không
+        const checkResult = await checkPool.query(
+          "SELECT 1 FROM pg_database WHERE datname = $1",
+          [config.database]
+        );
+
+        if (checkResult.rows.length === 0) {
+          // ✅ Database chưa tồn tại, tạo mới
+          logger.info("Target database does not exist, creating it", {
+            database: config.database,
+          });
+
+          // ⚠️ Không thể dùng parameterized query cho CREATE DATABASE
+          // Phải escape tên database để tránh SQL injection
+          const safeDatabaseName = config.database?.replace(
+            /[^a-zA-Z0-9_]/g,
+            ""
+          );
+          await checkPool.query(`CREATE DATABASE ${safeDatabaseName}`);
+
+          logger.info("Database created successfully", {
+            database: config.database,
+          });
+        } else {
+          logger.trace("Target database already exists", {
+            database: config.database,
+          });
+        }
+      } finally {
+        await checkPool.end();
+      }
+
+      // ✅ BƯỚC 2: Kết nối vào database đích
+      logger.trace("Creating PostgreSQL Pool instance for target database");
       const pool = new Pool(config as any);
 
       logger.trace("Creating IConnection object");
@@ -355,8 +407,10 @@ export class PostgreSQLAdapter extends BaseAdapter {
       this.type
     )} (${refColumns})`;
 
-    if (foreignKeyDef.on_delete) query += ` ON DELETE ${foreignKeyDef.on_delete}`;
-    if (foreignKeyDef.on_update) query += ` ON UPDATE ${foreignKeyDef.on_update}`;
+    if (foreignKeyDef.on_delete)
+      query += ` ON DELETE ${foreignKeyDef.on_delete}`;
+    if (foreignKeyDef.on_update)
+      query += ` ON UPDATE ${foreignKeyDef.on_update}`;
 
     await this.executeRaw(query, []);
     logger.info("Foreign key created successfully (PostgreSQL)", {
@@ -447,6 +501,40 @@ export class PostgreSQLAdapter extends BaseAdapter {
       });
     }
   }
+
+  // OVERRIDE createTable()
+  /* async createTable(
+    tableName: string,
+    schema: SchemaDefinition,
+    foreignKeys?: ForeignKeyDefinition[]
+  ): Promise<void> {
+    logger.debug("Creating PostgreSQL table with foreign keys", { tableName });
+
+    this.ensureConnected();
+
+    const columns: string[] = [];
+
+    for (const [fieldName, fieldDef] of Object.entries(schema)) {
+      const columnDef = this.buildColumnDefinition(fieldName, fieldDef);
+      columns.push(columnDef);
+    }
+
+    // ✅ Build inline foreign key constraints
+    const constraints = this.buildInlineConstraints(
+      tableName,
+      foreignKeys || []
+    );
+    const allColumns = [...columns, ...constraints].join(", ");
+
+    const query = this.buildCreateTableQuery(tableName, allColumns);
+
+    await this.executeRaw(query, []);
+
+    logger.info("PostgreSQL table created with foreign keys", {
+      tableName,
+      foreignKeyCount: constraints.length,
+    });
+  } */
 
   // ==========================================
   // ✅ OVERRIDE INSERT ONE - Sử dụng RETURNING *

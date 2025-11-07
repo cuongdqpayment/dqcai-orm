@@ -1,3 +1,95 @@
+export const CommonFields = {
+  id: {
+    uuid: {
+      name: "id",
+      type: "uuid" as const,
+      primaryKey: true,
+      required: true,
+      unique: true,
+      description: "Mã định danh duy nhất",
+    },
+    autoIncrement: {
+      name: "id",
+      type: "integer" as const,
+      primaryKey: true,
+      autoIncrement: true,
+      required: true,
+      description: "Khóa chính tự động tăng",
+    },
+    bigint: {
+      name: "id",
+      type: "bigint" as const,
+      primaryKey: true,
+      autoIncrement: true,
+      required: true,
+      description: "Khóa chính tự động tăng dạng bigint",
+    },
+  },
+
+  storeId: {
+    name: "store_id",
+    type: "uuid" as const,
+    required: true,
+    index: true,
+    description: "Mã định danh cửa hàng",
+  },
+
+  timestamps: {
+    createdAt: {
+      name: "created_at",
+      type: "timestamp" as const,
+      default: "CURRENT_TIMESTAMP",
+      description: "Thời gian tạo bản ghi",
+    },
+    updatedAt: {
+      name: "updated_at",
+      type: "timestamp" as const,
+      default: "CURRENT_TIMESTAMP",
+      description: "Thời gian cập nhật bản ghi lần cuối",
+    },
+  },
+
+  status: {
+    active: {
+      name: "status",
+      type: "varchar" as const,
+      length: 20,
+      default: "active",
+      enum: ["active", "inactive"],
+      description: "Trạng thái hoạt động",
+    },
+    withSuspended: {
+      name: "status",
+      type: "varchar" as const,
+      length: 20,
+      default: "active",
+      enum: ["active", "inactive", "suspended", "pending"],
+      description: "Trạng thái hoạt động của doanh nghiệp",
+    },
+  },
+
+  boolean: {
+    isActive: {
+      name: "is_active",
+      type: "boolean" as const,
+      default: true,
+      description: "Trạng thái hoạt động",
+    },
+    isEncrypted: {
+      name: "is_encrypted",
+      type: "boolean" as const,
+      default: false,
+      description: "Giá trị có được mã hóa không",
+    },
+    isSystem: {
+      name: "is_system",
+      type: "boolean" as const,
+      default: false,
+      description: "Thiết lập hệ thống (không được phép xóa)",
+    },
+  },
+};
+
 // ========================== POSTGRESQL TYPE MAPPING ==========================
 export const POSTGRESQL_TYPE_MAPPING = {
   postgresql: {

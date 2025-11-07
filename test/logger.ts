@@ -14,6 +14,7 @@ const APPModules = {
 
 const config = new LoggerConfigBuilder()
   .setEnabled(true)
+  // .setDefaultLevel("trace")
   .setDefaultLevel("warn")
   .build();
 

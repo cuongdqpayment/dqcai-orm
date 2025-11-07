@@ -398,7 +398,8 @@ export class DatabaseFactory {
     const dao = new UniversalDAO(
       adapter,
       schema,
-      options?.dbConfig || adapter.getConnection()?.rawConnection
+      options?.dbConfig || adapter.getConnection()?.rawConnection,
+      schemaKey
     );
 
     logger.debug("UniversalDAO instance created", { schemaKey });

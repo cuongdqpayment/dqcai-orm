@@ -5,19 +5,23 @@ import {
   ServiceManager,
   BaseService,
   DatabaseManager,
-  SQLiteAdapter,
-  SQLiteConfig,
+  PostgreSQLConfig,
+  PostgreSQLAdapter,
   ForeignKeyInfo,
 } from "../src/index";
 
 import { core as coreSchema } from "./coreSchema";
-const dbConfig: SQLiteConfig = {
-  databaseType: "sqlite",
+const dbConfig: PostgreSQLConfig = {
+  databaseType: "postgresql",
   database: "core",
-  // For File uncomment line below
-  filename: "./temp/core.db",
-  // For in-memory:
-  // memory: true,
+  host: "localhost",
+  port: 5432,
+  user: "cuongdq",
+  password: "Cng3500888@",
+  // Optional: connection pool settings
+  max: 20, // maximum number of clients in the pool
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000,
 };
 
 // ========== BƯỚC 1: Import logger utilities ==========
@@ -85,7 +89,7 @@ serviceManager.registerServices([
 async function verifyForeignKeys() {
   console.log("\n🔍 Verifying Foreign Keys...");
 
-  const adapter = DatabaseManager.getAdapterInstance("core") as SQLiteAdapter;
+  const adapter = DatabaseManager.getAdapterInstance("core") as PostgreSQLAdapter;
 
   const tables = ["stores", "users", "user_sessions", "settings"];
 
@@ -111,17 +115,15 @@ async function verifyForeignKeys() {
 async function main() {
   try {
     logger.debug("🔌 2.Registering Adapters...");
-    // 2. Create and connect adapter
-    const adapter = new SQLiteAdapter();
-    await adapter.connect(dbConfig);
-    console.log("✓ Database connected");
+    // 2. Create adapter
+    const adapter = new PostgreSQLAdapter(dbConfig);
 
     logger.debug("📋 3.Registering Schemas...");
     DatabaseManager.registerSchema("core", coreSchema);
 
-    // 3. Register adapter instance in DatabaseManager
+    // 3. Register adapter instance in DatabaseManager and connect adapter
     // This is the KEY FIX - register adapter BEFORE creating DAO
-    DatabaseManager.registerAdapterInstance("core", adapter);
+    await DatabaseManager.registerAdapterInstance("core", adapter);
     console.log("✓ Adapter registered in DatabaseManager");
 
     logger.debug("🔧 4.Initializing database...\n");

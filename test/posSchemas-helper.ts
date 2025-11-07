@@ -1,0 +1,3248 @@
+import {
+  DatabaseSchema,
+  CommonFields,
+  SQLITE_TYPE_MAPPING,
+} from "../src/index";
+
+// ========================
+// OMS DATABASE SCHEMA
+// ========================
+
+const oms: DatabaseSchema = {
+  version: "1.0",
+  database_type: "sqlite",
+  database_name: "oms",
+  description: "Xử lý đơn hàng từ nhiều kênh, quản lý trạng thái và quy trình",
+  type_mapping: SQLITE_TYPE_MAPPING,
+  schemas: {
+    orders: {
+      description: "Quản lý thông tin đơn hàng từ nhiều kênh",
+      cols: [
+        { ...CommonFields.id.uuid },
+        {
+          name: "user_id",
+          type: "integer",
+          nullable: true,
+          description: "Định danh người dùng tạo đơn",
+        },
+        {
+          name: "customer_id",
+          type: "integer",
+          nullable: true,
+          description: "Định danh khách hàng",
+        },
+        {
+          name: "table_id",
+          type: "integer",
+          nullable: true,
+          description: "Định danh bàn ăn",
+        },
+        {
+          name: "booking_id",
+          type: "uuid",
+          nullable: true,
+          description: "Định danh đặt chỗ",
+        },
+        { ...CommonFields.storeId },
+        {
+          name: "order_number",
+          type: "varchar",
+          length: 50,
+          required: true,
+          unique: true,
+          index: true,
+          description: "Số đơn hàng",
+        },
+        {
+          name: "subtotal",
+          type: "decimal",
+          precision: 10,
+          scale: 2,
+          required: true,
+          description: "Tổng giá trị trước thuế và giảm giá",
+        },
+        {
+          name: "tax_amount",
+          type: "decimal",
+          precision: 10,
+          scale: 2,
+          default: 0,
+          description: "Số tiền thuế",
+        },
+        {
+          name: "discount_amount",
+          type: "decimal",
+          precision: 10,
+          scale: 2,
+          default: 0,
+          description: "Số tiền giảm giá",
+        },
+        {
+          name: "total",
+          type: "decimal",
+          precision: 10,
+          scale: 2,
+          required: true,
+          description: "Tổng giá trị cuối cùng",
+        },
+        {
+          name: "status",
+          type: "varchar",
+          length: 20,
+          required: true,
+          default: "pending",
+          enum: ["pending", "confirmed", "preparing", "completed", "canceled"],
+          description: "Trạng thái đơn hàng",
+        },
+        {
+          name: "order_type",
+          type: "varchar",
+          length: 20,
+          required: true,
+          default: "dine_in",
+          enum: ["dine_in", "takeaway", "delivery"],
+          description: "Loại đơn hàng",
+        },
+        { ...CommonFields.timestamps.createdAt },
+        {
+          name: "promotion_id",
+          type: "integer",
+          nullable: true,
+          description: "Định danh chương trình khuyến mãi",
+        },
+        {
+          name: "online_order_id",
+          type: "uuid",
+          nullable: true,
+          description: "Định danh đơn hàng online",
+        },
+      ],
+      indexes: [
+        {
+          name: "idx_orders_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+        {
+          name: "idx_orders_customer_id",
+          fields: ["customer_id"],
+          description: "Index cho customer_id",
+        },
+      ],
+    },
+
+    order_items: {
+      description: "Chi tiết các mặt hàng trong đơn hàng",
+      cols: [
+        { ...CommonFields.id.autoIncrement },
+        {
+          name: "order_id",
+          type: "uuid",
+          required: true,
+          index: true,
+          description: "Định danh đơn hàng",
+        },
+        {
+          name: "product_id",
+          type: "integer",
+          required: true,
+          index: true,
+          description: "Định danh sản phẩm",
+        },
+        {
+          name: "variant_id",
+          type: "integer",
+          nullable: true,
+          description: "Định danh biến thể",
+        },
+        {
+          name: "quantity",
+          type: "integer",
+          required: true,
+          description: "Số lượng sản phẩm",
+        },
+        {
+          name: "unit_price",
+          type: "decimal",
+          precision: 10,
+          scale: 2,
+          required: true,
+          description: "Đơn giá",
+        },
+        {
+          name: "total_price",
+          type: "decimal",
+          precision: 10,
+          scale: 2,
+          required: true,
+          description: "Tổng giá trị",
+        },
+        {
+          name: "notes",
+          type: "varchar",
+          length: 500,
+          nullable: true,
+          description: "Ghi chú",
+        },
+        {
+          name: "status",
+          type: "varchar",
+          length: 20,
+          default: "pending",
+          enum: ["pending", "preparing", "served", "canceled"],
+          description: "Trạng thái mục đơn hàng",
+        },
+        { ...CommonFields.timestamps.createdAt },
+      ],
+      indexes: [
+        {
+          name: "idx_order_items_order_id",
+          fields: ["order_id"],
+          description: "Index cho order_id",
+        },
+        {
+          name: "idx_order_items_product_id",
+          fields: ["product_id"],
+          description: "Index cho product_id",
+        },
+      ],
+      foreign_keys: [
+        {
+          name: "fk_order_items_order_id",
+          fields: ["order_id"],
+          references: {
+            table: "orders",
+            fields: ["id"],
+          },
+          on_delete: "CASCADE",
+          on_update: "CASCADE",
+          description: "Liên kết với bảng orders",
+        },
+      ],
+    },
+
+    transactions: {
+      description: "Quản lý giao dịch thanh toán",
+      cols: [
+        { ...CommonFields.id.uuid },
+        {
+          name: "order_id",
+          type: "uuid",
+          required: true,
+          index: true,
+          description: "Định danh đơn hàng",
+        },
+        {
+          name: "booking_id",
+          type: "uuid",
+          nullable: true,
+          description: "Định danh đặt chỗ",
+        },
+        { ...CommonFields.storeId },
+        {
+          name: "transaction_number",
+          type: "varchar",
+          length: 50,
+          required: true,
+          unique: true,
+          index: true,
+          description: "Số giao dịch",
+        },
+        {
+          name: "amount",
+          type: "decimal",
+          precision: 10,
+          scale: 2,
+          required: true,
+          description: "Số tiền giao dịch",
+        },
+        {
+          name: "payment_method",
+          type: "varchar",
+          length: 50,
+          required: true,
+          enum: ["credit_card", "bank_transfer", "mobile_payment", "cash"],
+          description: "Phương thức thanh toán",
+        },
+        {
+          name: "status",
+          type: "varchar",
+          length: 20,
+          required: true,
+          default: "pending",
+          enum: ["pending", "completed", "failed", "refunded"],
+          description: "Trạng thái giao dịch",
+        },
+        {
+          name: "reference_id",
+          type: "varchar",
+          length: 100,
+          nullable: true,
+          description: "Mã tham chiếu",
+        },
+        {
+          name: "payment_transaction_id",
+          type: "uuid",
+          nullable: true,
+          description: "Định danh giao dịch thanh toán",
+        },
+        { ...CommonFields.timestamps.createdAt },
+      ],
+      indexes: [
+        {
+          name: "idx_transactions_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+        {
+          name: "idx_transactions_order_id",
+          fields: ["order_id"],
+          description: "Index cho order_id",
+        },
+      ],
+      foreign_keys: [
+        {
+          name: "fk_transactions_order_id",
+          fields: ["order_id"],
+          references: {
+            table: "orders",
+            fields: ["id"],
+          },
+          on_delete: "CASCADE",
+          on_update: "CASCADE",
+          description: "Liên kết với bảng orders",
+        },
+      ],
+    },
+
+    online_orders: {
+      description: "Quản lý đơn hàng online và giao hàng",
+      cols: [
+        { ...CommonFields.id.uuid },
+        {
+          name: "order_id",
+          type: "uuid",
+          required: true,
+          unique: true,
+          index: true,
+          description: "Định danh đơn hàng",
+        },
+        {
+          name: "customer_id",
+          type: "integer",
+          nullable: true,
+          description: "Định danh khách hàng",
+        },
+        { ...CommonFields.storeId },
+        {
+          name: "delivery_address",
+          type: "varchar",
+          length: 255,
+          required: true,
+          description: "Địa chỉ giao hàng",
+        },
+        {
+          name: "delivery_service",
+          type: "varchar",
+          length: 50,
+          required: true,
+          description: "Dịch vụ vận chuyển",
+        },
+        {
+          name: "delivery_fee",
+          type: "decimal",
+          precision: 10,
+          scale: 2,
+          default: 0,
+          description: "Phí giao hàng",
+        },
+        {
+          name: "estimated_delivery_time",
+          type: "datetime",
+          nullable: true,
+          description: "Thời gian giao hàng dự kiến",
+        },
+        {
+          name: "status",
+          type: "varchar",
+          length: 20,
+          required: true,
+          default: "pending",
+          enum: ["pending", "confirmed", "shipped", "delivered", "canceled"],
+          description: "Trạng thái đơn hàng online",
+        },
+        {
+          name: "tracking_id",
+          type: "varchar",
+          length: 100,
+          nullable: true,
+          description: "Mã theo dõi",
+        },
+        {
+          name: "special_instructions",
+          type: "varchar",
+          length: 500,
+          nullable: true,
+          description: "Hướng dẫn đặc biệt",
+        },
+        { ...CommonFields.timestamps.createdAt },
+      ],
+      indexes: [
+        {
+          name: "idx_online_orders_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+        {
+          name: "idx_online_orders_order_id",
+          fields: ["order_id"],
+          unique: true,
+          description: "Index duy nhất cho order_id",
+        },
+      ],
+      foreign_keys: [
+        {
+          name: "fk_online_orders_order_id",
+          fields: ["order_id"],
+          references: {
+            table: "orders",
+            fields: ["id"],
+          },
+          on_delete: "CASCADE",
+          on_update: "CASCADE",
+          description: "Liên kết với bảng orders",
+        },
+      ],
+    },
+  },
+};
+
+// ========================
+// PAYMENT DATABASE SCHEMA
+// ========================
+
+const payment: DatabaseSchema = {
+  version: "1.0",
+  database_type: "sqlite",
+  database_name: "payment",
+  description: "Xử lý giao dịch thanh toán và tích hợp cổng thanh toán",
+  type_mapping: SQLITE_TYPE_MAPPING,
+  schemas: {
+    payment_transactions: {
+      description: "Quản lý giao dịch thanh toán qua cổng thanh toán",
+      cols: [
+        { ...CommonFields.id.uuid },
+        {
+          name: "transaction_id",
+          type: "varchar",
+          length: 100,
+          required: true,
+          unique: true,
+          index: true,
+          description: "Định danh giao dịch",
+        },
+        {
+          name: "order_id",
+          type: "uuid",
+          required: true,
+          index: true,
+          description: "Định danh đơn hàng",
+        },
+        { ...CommonFields.storeId },
+        {
+          name: "payment_gateway",
+          type: "varchar",
+          length: 50,
+          required: true,
+          description: "Tên cổng thanh toán",
+        },
+        {
+          name: "amount",
+          type: "decimal",
+          precision: 10,
+          scale: 2,
+          required: true,
+          description: "Số tiền giao dịch",
+        },
+        {
+          name: "currency",
+          type: "char",
+          length: 3,
+          required: true,
+          default: "VND",
+          description: "Loại tiền tệ",
+        },
+        {
+          name: "payment_method",
+          type: "varchar",
+          length: 50,
+          required: true,
+          enum: ["credit_card", "bank_transfer", "mobile_payment", "cash"],
+          description: "Phương thức thanh toán",
+        },
+        {
+          name: "status",
+          type: "varchar",
+          length: 20,
+          required: true,
+          default: "pending",
+          enum: ["pending", "completed", "failed", "refunded", "canceled"],
+          description: "Trạng thái giao dịch",
+        },
+        {
+          name: "gateway_transaction_id",
+          type: "varchar",
+          length: 100,
+          nullable: true,
+          description: "Mã giao dịch từ cổng",
+        },
+        {
+          name: "gateway_response",
+          type: "json",
+          nullable: true,
+          description: "Phản hồi từ cổng",
+        },
+        { ...CommonFields.timestamps.createdAt },
+      ],
+      indexes: [
+        {
+          name: "idx_payment_transactions_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+        {
+          name: "idx_payment_transactions_order_id",
+          fields: ["order_id"],
+          description: "Index cho order_id",
+        },
+      ],
+    },
+
+    payment_configs: {
+      description: "Cấu hình cổng thanh toán",
+      cols: [
+        { ...CommonFields.id.autoIncrement },
+        { ...CommonFields.storeId },
+        {
+          name: "payment_method",
+          type: "varchar",
+          length: 50,
+          required: true,
+          enum: ["credit_card", "bank_transfer", "mobile_payment", "cash"],
+          description: "Phương thức thanh toán",
+        },
+        {
+          name: "gateway_name",
+          type: "varchar",
+          length: 50,
+          required: true,
+          index: true,
+          description: "Tên cổng thanh toán",
+        },
+        {
+          name: "partner_code",
+          type: "varchar",
+          length: 100,
+          required: true,
+          description: "Mã đối tác",
+        },
+        {
+          name: "access_key",
+          type: "varchar",
+          length: 100,
+          required: true,
+          description: "Khóa truy cập",
+        },
+        {
+          name: "secret_key",
+          type: "varchar",
+          length: 100,
+          required: true,
+          description: "Khóa bí mật",
+        },
+        {
+          name: "endpoint_url",
+          type: "url",
+          required: true,
+          description: "URL điểm cuối",
+        },
+        {
+          name: "is_sandbox",
+          type: "boolean",
+          default: true,
+          description: "Môi trường thử nghiệm",
+        },
+        {
+          ...CommonFields.status.active,
+          description: "Trạng thái cấu hình",
+        },
+        { ...CommonFields.timestamps.createdAt },
+      ],
+      indexes: [
+        {
+          name: "idx_payment_configs_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+        {
+          name: "idx_payment_configs_gateway_name",
+          fields: ["gateway_name"],
+          description: "Index cho gateway_name",
+        },
+      ],
+    },
+  },
+};
+
+// ========================
+// MEDIA DATABASE SCHEMA
+// ========================
+
+const media: DatabaseSchema = {
+  version: "1.0",
+  database_type: "sqlite",
+  database_name: "media",
+  description: "Quản lý hình ảnh và thư mục theo cấu trúc cây",
+  type_mapping: SQLITE_TYPE_MAPPING,
+  schemas: {
+    folders: {
+      description: "Thư mục theo cấu trúc cây",
+      cols: [
+        { ...CommonFields.id.autoIncrement },
+        { ...CommonFields.storeId },
+        {
+          name: "name",
+          type: "string",
+          length: 255,
+          required: true,
+          description: "Tên thư mục",
+        },
+        {
+          name: "parent_id",
+          type: "integer",
+          nullable: true,
+          index: true,
+          description: "Thư mục cha",
+        },
+        { ...CommonFields.timestamps.createdAt },
+        { ...CommonFields.timestamps.updatedAt },
+      ],
+      indexes: [
+        {
+          name: "idx_folders_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+        {
+          name: "idx_folders_parent_id",
+          fields: ["parent_id"],
+          description: "Index cho parent_id",
+        },
+      ],
+      foreign_keys: [
+        {
+          name: "fk_folder_parent_id",
+          fields: ["parent_id"],
+          references: {
+            table: "folders",
+            fields: ["id"],
+          },
+          on_delete: "SET NULL",
+          on_update: "CASCADE",
+          description: "Liên kết với thư mục cha",
+        },
+      ],
+    },
+
+    images: {
+      description: "Metadata hình ảnh",
+      cols: [
+        { ...CommonFields.id.autoIncrement },
+        { ...CommonFields.storeId },
+        {
+          name: "folder_id",
+          type: "integer",
+          nullable: true,
+          index: true,
+          description: "Thư mục chứa",
+        },
+        {
+          name: "name",
+          type: "string",
+          length: 255,
+          required: true,
+          description: "Tên hình ảnh",
+        },
+        {
+          name: "path",
+          type: "string",
+          length: 512,
+          required: true,
+          description: "Đường dẫn lưu trữ",
+        },
+        {
+          name: "size",
+          type: "integer",
+          nullable: true,
+          description: "Kích thước file (byte)",
+        },
+        {
+          name: "mime_type",
+          type: "string",
+          length: 50,
+          nullable: true,
+          description: "Loại MIME",
+        },
+        { ...CommonFields.timestamps.createdAt },
+        { ...CommonFields.timestamps.updatedAt },
+      ],
+      indexes: [
+        {
+          name: "idx_images_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+        {
+          name: "idx_images_folder_id",
+          fields: ["folder_id"],
+          description: "Index cho folder_id",
+        },
+      ],
+      foreign_keys: [
+        {
+          name: "fk_image_folder_id",
+          fields: ["folder_id"],
+          references: {
+            table: "folders",
+            fields: ["id"],
+          },
+          on_delete: "SET NULL",
+          on_update: "CASCADE",
+          description: "Liên kết với thư mục",
+        },
+      ],
+    },
+
+    thumbnails: {
+      description: "Quản lý thumbnail",
+      cols: [
+        { ...CommonFields.id.autoIncrement },
+        { ...CommonFields.storeId },
+        {
+          name: "image_id",
+          type: "integer",
+          nullable: true,
+          index: true,
+          description: "Hình ảnh gốc",
+        },
+        {
+          name: "size",
+          type: "string",
+          length: 50,
+          required: true,
+          enum: ["small", "medium", "large"],
+          description: "Kích thước thumbnail",
+        },
+        {
+          name: "path",
+          type: "string",
+          length: 512,
+          required: true,
+          description: "Đường dẫn lưu trữ",
+        },
+        { ...CommonFields.timestamps.createdAt },
+      ],
+      indexes: [
+        {
+          name: "idx_thumbnails_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+        {
+          name: "idx_thumbnails_image_id",
+          fields: ["image_id"],
+          description: "Index cho image_id",
+        },
+      ],
+      foreign_keys: [
+        {
+          name: "fk_images_image_id",
+          fields: ["image_id"],
+          references: {
+            table: "images",
+            fields: ["id"],
+          },
+          on_delete: "SET NULL",
+          on_update: "CASCADE",
+          description: "Liên kết với hình ảnh",
+        },
+      ],
+    },
+  },
+};
+
+// ========================
+// PRODUCT DATABASE SCHEMA
+// ========================
+
+const product: DatabaseSchema = {
+  version: "1.0",
+  database_type: "sqlite",
+  database_name: "product",
+  description: "Hệ thống quản lý danh mục sản phẩm",
+  type_mapping: SQLITE_TYPE_MAPPING,
+  schemas: {
+    categories: {
+      description: "Danh mục sản phẩm phân cấp",
+      cols: [
+        { ...CommonFields.id.autoIncrement },
+        { ...CommonFields.storeId },
+        {
+          name: "name",
+          type: "varchar",
+          length: 255,
+          required: true,
+          description: "Tên danh mục",
+        },
+        {
+          name: "description",
+          type: "string",
+          nullable: true,
+          description: "Mô tả danh mục",
+        },
+        {
+          name: "parent_id",
+          type: "integer",
+          nullable: true,
+          index: true,
+          description: "Danh mục cha",          
+        },
+        {
+          name: "level",
+          type: "integer",
+          default: 1,
+          description: "Cấp độ phân cấp",
+        },
+        {
+          name: "sort_order",
+          type: "integer",
+          default: 0,
+          description: "Thứ tự sắp xếp",
+        },
+        {
+          name: "image_url",
+          type: "url",
+          nullable: true,
+          description: "Hình ảnh đại diện",
+        },
+        {
+          name: "icon",
+          type: "varchar",
+          length: 50,
+          nullable: true,
+          description: "Biểu tượng",
+        },
+        {
+          name: "color",
+          type: "varchar",
+          length: 7,
+          nullable: true,
+          description: "Mã màu",
+        },
+        { ...CommonFields.boolean.isActive },
+        {
+          name: "metadata",
+          type: "json",
+          nullable: true,
+          description: "Dữ liệu bổ sung",
+        },
+        { ...CommonFields.timestamps.createdAt },
+        { ...CommonFields.timestamps.updatedAt },
+      ],
+      indexes: [
+        {
+          name: "idx_categories_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+        {
+          name: "idx_categories_parent_id",
+          fields: ["parent_id"],
+          description: "Index cho parent_id",
+        },
+      ],
+      foreign_keys: [
+        {
+          name: "fk_categories_parent_id",
+          fields: ["parent_id"],
+          references: {
+            table: "categories",
+            fields: ["id"],
+          },
+          on_delete: "SET NULL",
+          on_update: "CASCADE",
+          description: "Liên kết danh mục cha",
+        },
+      ],
+    },
+
+    products: {
+      description: "Thông tin chi tiết sản phẩm",
+      cols: [
+        { ...CommonFields.id.autoIncrement },
+        { ...CommonFields.storeId },
+        {
+          name: "category_id",
+          type: "integer",
+          nullable: true,
+          index: true,
+          description: "Danh mục sản phẩm",
+        },
+        {
+          name: "name",
+          type: "varchar",
+          length: 255,
+          required: true,
+          description: "Tên sản phẩm",
+        },
+        {
+          name: "description",
+          type: "string",
+          nullable: true,
+          description: "Mô tả chi tiết",
+        },
+        {
+          name: "short_description",
+          type: "varchar",
+          length: 500,
+          nullable: true,
+          description: "Mô tả ngắn",
+        },
+        {
+          name: "sku",
+          type: "varchar",
+          length: 100,
+          required: true,
+          unique: true,
+          index: true,
+          description: "Mã SKU",
+        },
+        {
+          name: "barcode",
+          type: "varchar",
+          length: 100,
+          nullable: true,
+          description: "Mã vạch",
+        },
+        {
+          name: "qr_code",
+          type: "varchar",
+          length: 255,
+          nullable: true,
+          description: "Mã QR",
+        },
+        {
+          name: "price",
+          type: "decimal",
+          precision: 15,
+          scale: 2,
+          required: true,
+          description: "Giá bán",
+        },
+        {
+          name: "cost_price",
+          type: "decimal",
+          precision: 15,
+          scale: 2,
+          nullable: true,
+          description: "Giá vốn",
+        },
+        {
+          name: "compare_price",
+          type: "decimal",
+          precision: 15,
+          scale: 2,
+          nullable: true,
+          description: "Giá so sánh",
+        },
+        {
+          name: "unit",
+          type: "varchar",
+          length: 50,
+          nullable: true,
+          description: "Đơn vị tính",
+        },
+        {
+          name: "weight",
+          type: "decimal",
+          precision: 10,
+          scale: 2,
+          nullable: true,
+          description: "Trọng lượng",
+        },
+        {
+          name: "dimensions",
+          type: "json",
+          nullable: true,
+          description: "Kích thước",
+        },
+        {
+          name: "image_urls",
+          type: "json",
+          nullable: true,
+          description: "Danh sách URL hình ảnh",
+        },
+        {
+          name: "tags",
+          type: "json",
+          nullable: true,
+          description: "Thẻ gắn sản phẩm",
+        },
+        { ...CommonFields.boolean.isActive },
+        {
+          name: "is_featured",
+          type: "boolean",
+          default: false,
+          description: "Sản phẩm nổi bật",
+        },
+        {
+          name: "tax_class",
+          type: "varchar",
+          length: 50,
+          nullable: true,
+          description: "Loại thuế",
+        },
+        {
+          name: "attributes",
+          type: "json",
+          nullable: true,
+          description: "Thuộc tính bổ sung",
+        },
+        {
+          name: "seo_title",
+          type: "varchar",
+          length: 255,
+          nullable: true,
+          description: "Tiêu đề SEO",
+        },
+        {
+          name: "seo_description",
+          type: "string",
+          nullable: true,
+          description: "Mô tả SEO",
+        },
+        { ...CommonFields.timestamps.createdAt },
+        { ...CommonFields.timestamps.updatedAt },
+      ],
+      indexes: [
+        {
+          name: "idx_products_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+        {
+          name: "idx_products_category_id",
+          fields: ["category_id"],
+          description: "Index cho category_id",
+        },
+      ],
+      foreign_keys: [
+        {
+          name: "fk_products_category_id",
+          fields: ["category_id"],
+          references: {
+            table: "categories",
+            fields: ["id"],
+          },
+          on_delete: "SET NULL",
+          on_update: "CASCADE",
+          description: "Liên kết danh mục",
+        },
+      ],
+    },
+
+    product_variants: {
+      description: "Biến thể sản phẩm",
+      cols: [
+        { ...CommonFields.id.autoIncrement },
+        {
+          name: "product_id",
+          type: "integer",
+          required: true,
+          index: true,
+          description: "Sản phẩm chính",
+        },
+        { ...CommonFields.storeId },
+        {
+          name: "name",
+          type: "varchar",
+          length: 255,
+          required: true,
+          description: "Tên biến thể",
+        },
+        {
+          name: "sku",
+          type: "varchar",
+          length: 100,
+          required: true,
+          unique: true,
+          index: true,
+          description: "Mã SKU biến thể",
+        },
+        {
+          name: "barcode",
+          type: "varchar",
+          length: 100,
+          nullable: true,
+          description: "Mã vạch",
+        },
+        {
+          name: "price",
+          type: "decimal",
+          precision: 15,
+          scale: 2,
+          required: true,
+          description: "Giá bán",
+        },
+        {
+          name: "cost_price",
+          type: "decimal",
+          precision: 15,
+          scale: 2,
+          nullable: true,
+          description: "Giá vốn",
+        },
+        {
+          name: "compare_price",
+          type: "decimal",
+          precision: 15,
+          scale: 2,
+          nullable: true,
+          description: "Giá so sánh",
+        },
+        {
+          name: "weight",
+          type: "decimal",
+          precision: 10,
+          scale: 2,
+          nullable: true,
+          description: "Trọng lượng",
+        },
+        {
+          name: "image_url",
+          type: "url",
+          nullable: true,
+          description: "Hình ảnh biến thể",
+        },
+        {
+          name: "variant_attributes",
+          type: "json",
+          nullable: true,
+          description: "Thuộc tính biến thể",
+        },
+        {
+          name: "position",
+          type: "integer",
+          default: 0,
+          description: "Vị trí sắp xếp",
+        },
+        { ...CommonFields.boolean.isActive },
+        { ...CommonFields.timestamps.createdAt },
+        { ...CommonFields.timestamps.updatedAt },
+      ],
+      indexes: [
+        {
+          name: "idx_variants_product_id",
+          fields: ["product_id"],
+          description: "Index cho product_id",
+        },
+        {
+          name: "idx_variants_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+      ],
+      foreign_keys: [
+        {
+          name: "fk_variants_product_id",
+          fields: ["product_id"],
+          references: {
+            table: "products",
+            fields: ["id"],
+          },
+          on_delete: "CASCADE",
+          on_update: "CASCADE",
+          description: "Liên kết sản phẩm",
+        },
+      ],
+    },
+
+    product_attributes: {
+      description: "Thuộc tính tùy chỉnh sản phẩm",
+      cols: [
+        { ...CommonFields.id.autoIncrement },
+        { ...CommonFields.storeId },
+        {
+          name: "name",
+          type: "varchar",
+          length: 255,
+          required: true,
+          description: "Tên thuộc tính",
+        },
+        {
+          name: "is_required",
+          type: "boolean",
+          default: false,
+          description: "Thuộc tính bắt buộc",
+        },
+        {
+          name: "is_variation",
+          type: "boolean",
+          default: false,
+          description: "Dùng tạo biến thể",
+        },
+        {
+          name: "sort_order",
+          type: "integer",
+          default: 0,
+          description: "Thứ tự sắp xếp",
+        },
+        { ...CommonFields.timestamps.createdAt },
+      ],
+      indexes: [
+        {
+          name: "idx_attributes_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+      ],
+    },
+
+    product_images: {
+      description: "Hình ảnh sản phẩm",
+      cols: [
+        { ...CommonFields.id.autoIncrement },
+        {
+          name: "product_id",
+          type: "integer",
+          required: true,
+          index: true,
+          description: "Sản phẩm",
+        },
+        { ...CommonFields.storeId },
+        {
+          name: "url",
+          type: "url",
+          required: true,
+          description: "URL hình ảnh",
+        },
+        {
+          name: "alt_text",
+          type: "varchar",
+          length: 255,
+          nullable: true,
+          description: "Văn bản thay thế",
+        },
+        {
+          name: "sort_order",
+          type: "integer",
+          default: 0,
+          description: "Thứ tự sắp xếp",
+        },
+        {
+          name: "is_primary",
+          type: "boolean",
+          default: false,
+          description: "Hình ảnh chính",
+        },
+        { ...CommonFields.timestamps.createdAt },
+      ],
+      indexes: [
+        {
+          name: "idx_images_product_id",
+          fields: ["product_id"],
+          description: "Index cho product_id",
+        },
+        {
+          name: "idx_images_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+      ],
+      foreign_keys: [
+        {
+          name: "fk_images_product_id",
+          fields: ["product_id"],
+          references: {
+            table: "products",
+            fields: ["id"],
+          },
+          on_delete: "CASCADE",
+          on_update: "CASCADE",
+          description: "Liên kết sản phẩm",
+        },
+      ],
+    },
+
+    product_reviews: {
+      description: "Đánh giá sản phẩm",
+      cols: [
+        { ...CommonFields.id.autoIncrement },
+        {
+          name: "product_id",
+          type: "integer",
+          required: true,
+          index: true,
+          description: "Sản phẩm",
+        },
+        { ...CommonFields.storeId },
+        {
+          name: "customer_name",
+          type: "varchar",
+          length: 255,
+          required: true,
+          description: "Tên khách hàng",
+        },
+        {
+          name: "customer_email",
+          type: "email",
+          nullable: true,
+          description: "Email khách hàng",
+        },
+        {
+          name: "rating",
+          type: "integer",
+          required: true,
+          description: "Điểm đánh giá (1-5)",
+        },
+        {
+          name: "title",
+          type: "varchar",
+          length: 255,
+          nullable: true,
+          description: "Tiêu đề đánh giá",
+        },
+        {
+          name: "content",
+          type: "string",
+          nullable: true,
+          description: "Nội dung đánh giá",
+        },
+        {
+          name: "is_verified",
+          type: "boolean",
+          default: false,
+          description: "Đánh giá đã xác minh",
+        },
+        {
+          name: "is_approved",
+          type: "boolean",
+          default: false,
+          description: "Đã phê duyệt",
+        },
+        { ...CommonFields.timestamps.createdAt },
+      ],
+      indexes: [
+        {
+          name: "idx_reviews_product_id",
+          fields: ["product_id"],
+          description: "Index cho product_id",
+        },
+        {
+          name: "idx_reviews_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+      ],
+      foreign_keys: [
+        {
+          name: "fk_reviews_product_id",
+          fields: ["product_id"],
+          references: {
+            table: "products",
+            fields: ["id"],
+          },
+          on_delete: "CASCADE",
+          on_update: "CASCADE",
+          description: "Liên kết sản phẩm",
+        },
+      ],
+    },
+  },
+};
+
+// ========================
+// INVENTORY DATABASE SCHEMA
+// ========================
+
+const inventory: DatabaseSchema = {
+  version: "1.0",
+  database_type: "sqlite",
+  database_name: "inventory",
+  description: "Hệ thống quản lý tồn kho sản phẩm",
+  type_mapping: SQLITE_TYPE_MAPPING,
+  schemas: {
+    products: {
+      description: "Thông tin cơ bản sản phẩm cho tồn kho",
+      cols: [
+        { ...CommonFields.id.autoIncrement },
+        { ...CommonFields.storeId },
+        {
+          name: "sku",
+          type: "varchar",
+          length: 100,
+          required: true,
+          unique: true,
+          index: true,
+          description: "Mã SKU",
+        },
+      ],
+      indexes: [
+        {
+          name: "idx_products_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+      ],
+    },
+
+    product_variants: {
+      description: "Biến thể sản phẩm cho tồn kho",
+      cols: [
+        { ...CommonFields.id.autoIncrement },
+        {
+          name: "product_id",
+          type: "integer",
+          required: true,
+          index: true,
+          description: "Sản phẩm",
+        },
+        { ...CommonFields.storeId },
+        {
+          name: "sku",
+          type: "varchar",
+          length: 100,
+          required: true,
+          unique: true,
+          index: true,
+          description: "Mã SKU biến thể",
+        },
+      ],
+      indexes: [
+        {
+          name: "idx_variants_product_id",
+          fields: ["product_id"],
+          description: "Index cho product_id",
+        },
+        {
+          name: "idx_variants_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+      ],
+      foreign_keys: [
+        {
+          name: "fk_variants_product_id",
+          fields: ["product_id"],
+          references: {
+            table: "products",
+            fields: ["id"],
+          },
+          on_delete: "CASCADE",
+          on_update: "CASCADE",
+          description: "Liên kết sản phẩm",
+        },
+      ],
+    },
+
+    inventory: {
+      description: "Thông tin tồn kho chi tiết",
+      cols: [
+        { ...CommonFields.id.autoIncrement },
+        { ...CommonFields.storeId },
+        {
+          name: "product_id",
+          type: "integer",
+          required: true,
+          index: true,
+          description: "Sản phẩm",
+        },
+        {
+          name: "variant_id",
+          type: "integer",
+          nullable: true,
+          index: true,
+          description: "Biến thể",
+        },
+        {
+          name: "sku",
+          type: "varchar",
+          length: 100,
+          required: true,
+          unique: true,
+          index: true,
+          description: "Mã SKU",
+        },
+        {
+          name: "quantity_on_hand",
+          type: "integer",
+          required: true,
+          default: 0,
+          description: "Số lượng hiện có",
+        },
+        {
+          name: "quantity_reserved",
+          type: "integer",
+          required: true,
+          default: 0,
+          description: "Số lượng đã đặt trước",
+        },
+        {
+          name: "quantity_available",
+          type: "integer",
+          required: true,
+          default: 0,
+          description: "Số lượng có sẵn",
+        },
+        {
+          name: "reorder_level",
+          type: "integer",
+          default: 0,
+          description: "Mức tồn kho tối thiểu",
+        },
+        {
+          name: "max_stock_level",
+          type: "integer",
+          nullable: true,
+          description: "Mức tồn kho tối đa",
+        },
+        {
+          name: "location",
+          type: "varchar",
+          length: 100,
+          nullable: true,
+          description: "Vị trí lưu trữ",
+        },
+        {
+          name: "bin_location",
+          type: "varchar",
+          length: 100,
+          nullable: true,
+          description: "Vị trí cụ thể",
+        },
+        {
+          name: "unit_cost",
+          type: "decimal",
+          precision: 15,
+          scale: 2,
+          nullable: true,
+          description: "Đơn giá vốn",
+        },
+        {
+          name: "total_value",
+          type: "decimal",
+          precision: 15,
+          scale: 2,
+          nullable: true,
+          description: "Tổng giá trị",
+        },
+        {
+          name: "last_count_date",
+          type: "date",
+          nullable: true,
+          description: "Ngày kiểm kê gần nhất",
+        },
+        {
+          name: "last_movement_date",
+          type: "date",
+          nullable: true,
+          description: "Ngày di chuyển gần nhất",
+        },
+        { ...CommonFields.timestamps.createdAt },
+        { ...CommonFields.timestamps.updatedAt },
+      ],
+      indexes: [
+        {
+          name: "idx_inventory_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+        {
+          name: "idx_inventory_product_id",
+          fields: ["product_id"],
+          description: "Index cho product_id",
+        },
+        {
+          name: "idx_inventory_variant_id",
+          fields: ["variant_id"],
+          description: "Index cho variant_id",
+        },
+      ],
+      foreign_keys: [
+        {
+          name: "fk_inventory_product_id",
+          fields: ["product_id"],
+          references: {
+            table: "products",
+            fields: ["id"],
+          },
+          on_delete: "CASCADE",
+          on_update: "CASCADE",
+          description: "Liên kết sản phẩm",
+        },
+        {
+          name: "fk_inventory_variant_id",
+          fields: ["variant_id"],
+          references: {
+            table: "product_variants",
+            fields: ["id"],
+          },
+          on_delete: "CASCADE",
+          on_update: "CASCADE",
+          description: "Liên kết biến thể",
+        },
+      ],
+    },
+
+    inventory_movements: {
+      description: "Lịch sử di chuyển tồn kho",
+      cols: [
+        { ...CommonFields.id.autoIncrement },
+        { ...CommonFields.storeId },
+        {
+          name: "inventory_id",
+          type: "integer",
+          required: true,
+          index: true,
+          description: "Bản ghi tồn kho",
+        },
+        {
+          name: "reference_type",
+          type: "varchar",
+          length: 50,
+          required: true,
+          enum: ["order", "adjustment", "transfer", "return"],
+          description: "Loại tham chiếu",
+        },
+        {
+          name: "reference_id",
+          type: "varchar",
+          length: 100,
+          nullable: true,
+          description: "Mã tham chiếu",
+        },
+        {
+          name: "movement_type",
+          type: "varchar",
+          length: 50,
+          required: true,
+          enum: ["in", "out", "adjustment"],
+          description: "Loại di chuyển",
+        },
+        {
+          name: "quantity",
+          type: "integer",
+          required: true,
+          description: "Số lượng di chuyển",
+        },
+        {
+          name: "unit_cost",
+          type: "decimal",
+          precision: 15,
+          scale: 2,
+          nullable: true,
+          description: "Đơn giá",
+        },
+        {
+          name: "total_cost",
+          type: "decimal",
+          precision: 15,
+          scale: 2,
+          nullable: true,
+          description: "Tổng chi phí",
+        },
+        {
+          name: "reason",
+          type: "varchar",
+          length: 255,
+          nullable: true,
+          description: "Lý do di chuyển",
+        },
+        {
+          name: "notes",
+          type: "string",
+          nullable: true,
+          description: "Ghi chú",
+        },
+        {
+          name: "user_id",
+          type: "integer",
+          nullable: true,
+          description: "Người thực hiện",
+        },
+        { ...CommonFields.timestamps.createdAt },
+      ],
+      indexes: [
+        {
+          name: "idx_movements_inventory_id",
+          fields: ["inventory_id"],
+          description: "Index cho inventory_id",
+        },
+        {
+          name: "idx_movements_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+      ],
+      foreign_keys: [
+        {
+          name: "fk_movements_inventory_id",
+          fields: ["inventory_id"],
+          references: {
+            table: "inventory",
+            fields: ["id"],
+          },
+          on_delete: "CASCADE",
+          on_update: "CASCADE",
+          description: "Liên kết tồn kho",
+        },
+      ],
+    },
+
+    stock_adjustments: {
+      description: "Điều chỉnh tồn kho",
+      cols: [
+        { ...CommonFields.id.autoIncrement },
+        { ...CommonFields.storeId },
+        {
+          name: "adjustment_number",
+          type: "varchar",
+          length: 100,
+          required: true,
+          unique: true,
+          index: true,
+          description: "Số điều chỉnh",
+        },
+        {
+          name: "reason",
+          type: "varchar",
+          length: 255,
+          required: true,
+          description: "Lý do điều chỉnh",
+        },
+        {
+          name: "notes",
+          type: "string",
+          nullable: true,
+          description: "Ghi chú",
+        },
+        {
+          name: "status",
+          type: "varchar",
+          length: 50,
+          required: true,
+          default: "pending",
+          enum: ["pending", "approved", "rejected"],
+          description: "Trạng thái",
+        },
+        {
+          name: "user_id",
+          type: "integer",
+          nullable: true,
+          description: "Người tạo",
+        },
+        {
+          name: "approved_by",
+          type: "integer",
+          nullable: true,
+          description: "Người phê duyệt",
+        },
+        {
+          name: "approved_at",
+          type: "timestamp",
+          nullable: true,
+          description: "Thời gian phê duyệt",
+        },
+        { ...CommonFields.timestamps.createdAt },
+        { ...CommonFields.timestamps.updatedAt },
+      ],
+      indexes: [
+        {
+          name: "idx_adjustments_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+      ],
+    },
+
+    stock_adjustment_items: {
+      description: "Chi tiết điều chỉnh tồn kho",
+      cols: [
+        { ...CommonFields.id.autoIncrement },
+        {
+          name: "adjustment_id",
+          type: "integer",
+          required: true,
+          index: true,
+          description: "Điều chỉnh",
+        },
+        { ...CommonFields.storeId },
+        {
+          name: "inventory_id",
+          type: "integer",
+          required: true,
+          index: true,
+          description: "Tồn kho",
+        },
+        {
+          name: "expected_quantity",
+          type: "integer",
+          required: true,
+          description: "Số lượng kỳ vọng",
+        },
+        {
+          name: "actual_quantity",
+          type: "integer",
+          required: true,
+          description: "Số lượng thực tế",
+        },
+        {
+          name: "difference",
+          type: "integer",
+          required: true,
+          description: "Chênh lệch",
+        },
+        {
+          name: "unit_cost",
+          type: "decimal",
+          precision: 15,
+          scale: 2,
+          nullable: true,
+          description: "Đơn giá",
+        },
+        {
+          name: "total_cost_impact",
+          type: "decimal",
+          precision: 15,
+          scale: 2,
+          nullable: true,
+          description: "Ảnh hưởng chi phí",
+        },
+        {
+          name: "reason",
+          type: "varchar",
+          length: 255,
+          nullable: true,
+          description: "Lý do",
+        },
+        { ...CommonFields.timestamps.createdAt },
+      ],
+      indexes: [
+        {
+          name: "idx_adjustment_items_adjustment_id",
+          fields: ["adjustment_id"],
+          description: "Index cho adjustment_id",
+        },
+        {
+          name: "idx_adjustment_items_inventory_id",
+          fields: ["inventory_id"],
+          description: "Index cho inventory_id",
+        },
+        {
+          name: "idx_adjustment_items_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+      ],
+      foreign_keys: [
+        {
+          name: "fk_adjustment_items_adjustment_id",
+          fields: ["adjustment_id"],
+          references: {
+            table: "stock_adjustments",
+            fields: ["id"],
+          },
+          on_delete: "CASCADE",
+          on_update: "CASCADE",
+          description: "Liên kết điều chỉnh",
+        },
+        {
+          name: "fk_adjustment_items_inventory_id",
+          fields: ["inventory_id"],
+          references: {
+            table: "inventory",
+            fields: ["id"],
+          },
+          on_delete: "CASCADE",
+          on_update: "CASCADE",
+          description: "Liên kết tồn kho",
+        },
+      ],
+    },
+
+    inventory_counts: {
+      description: "Kiểm kê tồn kho",
+      cols: [
+        { ...CommonFields.id.autoIncrement },
+        { ...CommonFields.storeId },
+        {
+          name: "count_number",
+          type: "varchar",
+          length: 100,
+          required: true,
+          unique: true,
+          index: true,
+          description: "Số kiểm kê",
+        },
+        {
+          name: "count_type",
+          type: "varchar",
+          length: 50,
+          required: true,
+          enum: ["full", "partial"],
+          description: "Loại kiểm kê",
+        },
+        {
+          name: "status",
+          type: "varchar",
+          length: 50,
+          required: true,
+          default: "in_progress",
+          enum: ["in_progress", "completed"],
+          description: "Trạng thái",
+        },
+        {
+          name: "location",
+          type: "varchar",
+          length: 100,
+          nullable: true,
+          description: "Vị trí kiểm kê",
+        },
+        {
+          name: "notes",
+          type: "string",
+          nullable: true,
+          description: "Ghi chú",
+        },
+        {
+          name: "started_by",
+          type: "integer",
+          nullable: true,
+          description: "Người bắt đầu",
+        },
+        {
+          name: "completed_by",
+          type: "integer",
+          nullable: true,
+          description: "Người hoàn tất",
+        },
+        {
+          name: "started_at",
+          type: "timestamp",
+          nullable: true,
+          description: "Thời gian bắt đầu",
+        },
+        {
+          name: "completed_at",
+          type: "timestamp",
+          nullable: true,
+          description: "Thời gian hoàn tất",
+        },
+        { ...CommonFields.timestamps.createdAt },
+      ],
+      indexes: [
+        {
+          name: "idx_counts_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+      ],
+    },
+
+    inventory_count_items: {
+      description: "Chi tiết kiểm kê",
+      cols: [
+        { ...CommonFields.id.autoIncrement },
+        {
+          name: "count_id",
+          type: "integer",
+          required: true,
+          index: true,
+          description: "Kiểm kê",
+        },
+        { ...CommonFields.storeId },
+        {
+          name: "inventory_id",
+          type: "integer",
+          required: true,
+          index: true,
+          description: "Tồn kho",
+        },
+        {
+          name: "expected_quantity",
+          type: "integer",
+          required: true,
+          description: "Số lượng kỳ vọng",
+        },
+        {
+          name: "counted_quantity",
+          type: "integer",
+          required: true,
+          description: "Số lượng đã kiểm",
+        },
+        {
+          name: "difference",
+          type: "integer",
+          required: true,
+          description: "Chênh lệch",
+        },
+        {
+          name: "notes",
+          type: "string",
+          nullable: true,
+          description: "Ghi chú",
+        },
+        {
+          name: "counted_by",
+          type: "integer",
+          nullable: true,
+          description: "Người kiểm",
+        },
+        {
+          name: "counted_at",
+          type: "timestamp",
+          nullable: true,
+          description: "Thời gian kiểm",
+        },
+        { ...CommonFields.timestamps.createdAt },
+      ],
+      indexes: [
+        {
+          name: "idx_count_items_count_id",
+          fields: ["count_id"],
+          description: "Index cho count_id",
+        },
+        {
+          name: "idx_count_items_inventory_id",
+          fields: ["inventory_id"],
+          description: "Index cho inventory_id",
+        },
+        {
+          name: "idx_count_items_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+      ],
+      foreign_keys: [
+        {
+          name: "fk_count_items_count_id",
+          fields: ["count_id"],
+          references: {
+            table: "inventory_counts",
+            fields: ["id"],
+          },
+          on_delete: "CASCADE",
+          on_update: "CASCADE",
+          description: "Liên kết kiểm kê",
+        },
+        {
+          name: "fk_count_items_inventory_id",
+          fields: ["inventory_id"],
+          references: {
+            table: "inventory",
+            fields: ["id"],
+          },
+          on_delete: "CASCADE",
+          on_update: "CASCADE",
+          description: "Liên kết tồn kho",
+        },
+      ],
+    },
+
+    low_stock_alerts: {
+      description: "Cảnh báo tồn kho thấp",
+      cols: [
+        { ...CommonFields.id.autoIncrement },
+        { ...CommonFields.storeId },
+        {
+          name: "inventory_id",
+          type: "integer",
+          required: true,
+          index: true,
+          description: "Tồn kho",
+        },
+        {
+          name: "current_quantity",
+          type: "integer",
+          required: true,
+          description: "Số lượng hiện tại",
+        },
+        {
+          name: "reorder_level",
+          type: "integer",
+          required: true,
+          description: "Mức tồn kho tối thiểu",
+        },
+        {
+          name: "alert_level",
+          type: "varchar",
+          length: 50,
+          required: true,
+          enum: ["low", "critical"],
+          description: "Mức độ cảnh báo",
+        },
+        {
+          name: "is_acknowledged",
+          type: "boolean",
+          default: false,
+          description: "Đã xác nhận",
+        },
+        {
+          name: "acknowledged_by",
+          type: "integer",
+          nullable: true,
+          description: "Người xác nhận",
+        },
+        {
+          name: "acknowledged_at",
+          type: "timestamp",
+          nullable: true,
+          description: "Thời gian xác nhận",
+        },
+        { ...CommonFields.timestamps.createdAt },
+      ],
+      indexes: [
+        {
+          name: "idx_alerts_inventory_id",
+          fields: ["inventory_id"],
+          description: "Index cho inventory_id",
+        },
+        {
+          name: "idx_alerts_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+      ],
+      foreign_keys: [
+        {
+          name: "fk_alerts_inventory_id",
+          fields: ["inventory_id"],
+          references: {
+            table: "inventory",
+            fields: ["id"],
+          },
+          on_delete: "CASCADE",
+          on_update: "CASCADE",
+          description: "Liên kết tồn kho",
+        },
+      ],
+    },
+  },
+};
+
+// ========================
+// FNB DATABASE SCHEMA
+// ========================
+
+const fnb: DatabaseSchema = {
+  version: "1.0",
+  database_type: "sqlite",
+  database_name: "fnb",
+  description: "Module F&B - Quản lý bàn và đặt chỗ",
+  type_mapping: SQLITE_TYPE_MAPPING,
+  schemas: {
+    tables: {
+      description: "Quản lý bàn ăn",
+      cols: [
+        { ...CommonFields.id.autoIncrement },
+        { ...CommonFields.storeId },
+        {
+          name: "name",
+          type: "varchar",
+          length: 50,
+          required: true,
+          description: "Tên/mã bàn",
+        },
+        {
+          name: "capacity",
+          type: "integer",
+          required: true,
+          description: "Sức chứa",
+        },
+        {
+          name: "location",
+          type: "varchar",
+          length: 100,
+          nullable: true,
+          description: "Vị trí trong nhà hàng",
+        },
+        {
+          name: "status",
+          type: "varchar",
+          length: 20,
+          default: "available",
+          enum: ["available", "occupied", "reserved", "maintenance"],
+          description: "Trạng thái bàn",
+        },
+        { ...CommonFields.timestamps.createdAt },
+      ],
+      indexes: [
+        {
+          name: "idx_tables_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+        {
+          name: "idx_tables_name_store_id",
+          fields: ["name", "store_id"],
+          unique: true,
+          description: "Index duy nhất cho tên bàn",
+        },
+      ],
+    },
+
+    bookings: {
+      description: "Quản lý đặt chỗ",
+      cols: [
+        { ...CommonFields.id.uuid },
+        { ...CommonFields.storeId },
+        {
+          name: "customer_id",
+          type: "integer",
+          nullable: true,
+          description: "Khách hàng",
+        },
+        {
+          name: "table_id",
+          type: "integer",
+          required: true,
+          index: true,
+          description: "Bàn ăn",
+        },
+        {
+          name: "guest_count",
+          type: "integer",
+          required: true,
+          description: "Số lượng khách",
+        },
+        {
+          name: "booking_date",
+          type: "date",
+          required: true,
+          index: true,
+          description: "Ngày đặt chỗ",
+        },
+        {
+          name: "booking_time",
+          type: "time",
+          required: true,
+          description: "Thời gian đặt chỗ",
+        },
+        {
+          name: "status",
+          type: "varchar",
+          length: 20,
+          required: true,
+          default: "confirmed",
+          enum: ["confirmed", "pending", "cancelled", "completed"],
+          description: "Trạng thái đặt chỗ",
+        },
+        {
+          name: "special_requests",
+          type: "varchar",
+          length: 500,
+          nullable: true,
+          description: "Yêu cầu đặc biệt",
+        },
+        { ...CommonFields.timestamps.createdAt },
+      ],
+      indexes: [
+        {
+          name: "idx_bookings_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+        {
+          name: "idx_bookings_table_id",
+          fields: ["table_id"],
+          description: "Index cho table_id",
+        },
+        {
+          name: "idx_bookings_booking_date",
+          fields: ["booking_date"],
+          description: "Index cho ngày đặt",
+        },
+      ],
+      foreign_keys: [
+        {
+          name: "fk_bookings_table_id",
+          fields: ["table_id"],
+          references: {
+            table: "tables",
+            fields: ["id"],
+          },
+          on_delete: "RESTRICT",
+          on_update: "CASCADE",
+          description: "Liên kết bàn ăn",
+        },
+      ],
+    },
+  },
+};
+
+// ========================
+// SCM DATABASE SCHEMA
+// ========================
+
+const scm: DatabaseSchema = {
+  version: "1.0",
+  database_type: "sqlite",
+  database_name: "scm",
+  description: "Quản lý chuỗi cung ứng",
+  type_mapping: SQLITE_TYPE_MAPPING,
+  schemas: {
+    suppliers: {
+      description: "Thông tin nhà cung cấp",
+      cols: [
+        { ...CommonFields.id.autoIncrement },
+        { ...CommonFields.storeId },
+        {
+          name: "name",
+          type: "varchar",
+          length: 255,
+          required: true,
+          description: "Tên nhà cung cấp",
+        },
+        {
+          name: "contact_person",
+          type: "varchar",
+          length: 100,
+          nullable: true,
+          description: "Người liên hệ",
+        },
+        {
+          name: "phone",
+          type: "varchar",
+          length: 20,
+          nullable: true,
+          description: "Số điện thoại",
+        },
+        {
+          name: "email",
+          type: "email",
+          nullable: true,
+          description: "Email",
+        },
+        {
+          name: "address",
+          type: "varchar",
+          length: 255,
+          nullable: true,
+          description: "Địa chỉ",
+        },
+        {
+          name: "tax_code",
+          type: "varchar",
+          length: 50,
+          nullable: true,
+          description: "Mã số thuế",
+        },
+        {
+          name: "bank_account",
+          type: "varchar",
+          length: 100,
+          nullable: true,
+          description: "Tài khoản ngân hàng",
+        },
+        {
+          name: "status",
+          type: "varchar",
+          length: 20,
+          required: true,
+          default: "active",
+          enum: ["active", "inactive", "suspended"],
+          description: "Trạng thái",
+        },
+        { ...CommonFields.timestamps.createdAt },
+        { ...CommonFields.timestamps.updatedAt },
+      ],
+      indexes: [
+        {
+          name: "idx_suppliers_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+      ],
+    },
+
+    purchase_orders: {
+      description: "Đơn đặt hàng từ nhà cung cấp",
+      cols: [
+        { ...CommonFields.id.uuid },
+        { ...CommonFields.storeId },
+        {
+          name: "supplier_id",
+          type: "integer",
+          required: true,
+          index: true,
+          description: "Nhà cung cấp",
+        },
+        {
+          name: "user_id",
+          type: "integer",
+          nullable: true,
+          description: "Người tạo đơn",
+        },
+        {
+          name: "order_number",
+          type: "varchar",
+          length: 50,
+          required: true,
+          unique: true,
+          index: true,
+          description: "Số đơn đặt hàng",
+        },
+        {
+          name: "total_amount",
+          type: "decimal",
+          precision: 10,
+          scale: 2,
+          required: true,
+          description: "Tổng giá trị",
+        },
+        {
+          name: "status",
+          type: "varchar",
+          length: 20,
+          required: true,
+          default: "pending",
+          enum: ["pending", "confirmed", "shipped", "received", "canceled"],
+          description: "Trạng thái đơn hàng",
+        },
+        {
+          name: "order_date",
+          type: "date",
+          required: true,
+          description: "Ngày đặt hàng",
+        },
+        {
+          name: "expected_date",
+          type: "date",
+          nullable: true,
+          description: "Ngày dự kiến nhận",
+        },
+        {
+          name: "received_date",
+          type: "date",
+          nullable: true,
+          description: "Ngày nhận thực tế",
+        },
+        {
+          name: "notes",
+          type: "varchar",
+          length: 500,
+          nullable: true,
+          description: "Ghi chú",
+        },
+        { ...CommonFields.timestamps.createdAt },
+        { ...CommonFields.timestamps.updatedAt },
+      ],
+      indexes: [
+        {
+          name: "idx_purchase_orders_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+        {
+          name: "idx_purchase_orders_supplier_id",
+          fields: ["supplier_id"],
+          description: "Index cho supplier_id",
+        },
+      ],
+      foreign_keys: [
+        {
+          name: "fk_purchase_orders_supplier_id",
+          fields: ["supplier_id"],
+          references: {
+            table: "suppliers",
+            fields: ["id"],
+          },
+          on_delete: "RESTRICT",
+          on_update: "CASCADE",
+          description: "Liên kết nhà cung cấp",
+        },
+      ],
+    },
+
+    purchase_order_items: {
+      description: "Chi tiết đơn đặt hàng",
+      cols: [
+        { ...CommonFields.id.autoIncrement },
+        {
+          name: "purchase_order_id",
+          type: "uuid",
+          required: true,
+          index: true,
+          description: "Đơn đặt hàng",
+        },
+        {
+          name: "product_id",
+          type: "integer",
+          required: true,
+          index: true,
+          description: "Sản phẩm",
+        },
+        {
+          name: "variant_id",
+          type: "integer",
+          nullable: true,
+          index: true,
+          description: "Biến thể",
+        },
+        {
+          name: "quantity",
+          type: "integer",
+          required: true,
+          description: "Số lượng",
+        },
+        {
+          name: "unit_price",
+          type: "decimal",
+          precision: 10,
+          scale: 2,
+          required: true,
+          description: "Đơn giá",
+        },
+        {
+          name: "total_price",
+          type: "decimal",
+          precision: 10,
+          scale: 2,
+          required: true,
+          description: "Tổng giá",
+        },
+        {
+          name: "received_quantity",
+          type: "integer",
+          required: true,
+          default: 0,
+          description: "Số lượng đã nhận",
+        },
+        { ...CommonFields.timestamps.createdAt },
+        { ...CommonFields.timestamps.updatedAt },
+      ],
+      indexes: [
+        {
+          name: "idx_purchase_order_items_purchase_order_id",
+          fields: ["purchase_order_id"],
+          description: "Index cho purchase_order_id",
+        },
+        {
+          name: "idx_purchase_order_items_product_id",
+          fields: ["product_id"],
+          description: "Index cho product_id",
+        },
+        {
+          name: "idx_purchase_order_items_variant_id",
+          fields: ["variant_id"],
+          description: "Index cho variant_id",
+        },
+      ],
+      foreign_keys: [
+        {
+          name: "fk_purchase_order_items_purchase_order_id",
+          fields: ["purchase_order_id"],
+          references: {
+            table: "purchase_orders",
+            fields: ["id"],
+          },
+          on_delete: "CASCADE",
+          on_update: "CASCADE",
+          description: "Liên kết đơn đặt hàng",
+        },
+      ],
+    },
+  },
+};
+
+// ========================
+// CONFIG DATABASE SCHEMA
+// ========================
+
+const config: DatabaseSchema = {
+  version: "1.0",
+  database_name: "config",
+  description: "Quản lý cấu hình hệ thống động",
+  type_mapping: SQLITE_TYPE_MAPPING,
+  schemas: {
+    settings: {
+      description: "Thiết lập cấu hình hệ thống",
+      cols: [
+        { ...CommonFields.id.autoIncrement },
+        { ...CommonFields.storeId },
+        {
+          name: "category",
+          type: "varchar",
+          length: 50,
+          required: true,
+          enum: ["payment", "notification", "business_rules", "ui_config"],
+          index: true,
+          description: "Danh mục thiết lập",
+        },
+        {
+          name: "key",
+          type: "varchar",
+          length: 100,
+          required: true,
+          description: "Khóa định danh",
+        },
+        {
+          name: "value",
+          type: "varchar",
+          length: 1000,
+          nullable: true,
+          description: "Giá trị thiết lập",
+        },
+        {
+          name: "description",
+          type: "varchar",
+          length: 500,
+          nullable: true,
+          description: "Mô tả chi tiết",
+        },
+        {
+          name: "data_type",
+          type: "varchar",
+          length: 20,
+          default: "string",
+          enum: ["string", "number", "boolean", "json", "array"],
+          description: "Kiểu dữ liệu",
+        },
+        {
+          name: "validation_rules",
+          type: "json",
+          nullable: true,
+          description: "Quy tắc validation",
+        },
+        { ...CommonFields.boolean.isEncrypted },
+        { ...CommonFields.boolean.isSystem },
+        { ...CommonFields.boolean.isActive },
+        { ...CommonFields.timestamps.createdAt },
+        { ...CommonFields.timestamps.updatedAt },
+        {
+          name: "updated_by",
+          type: "integer",
+          nullable: true,
+          description: "Người cập nhật",
+        },
+      ],
+      indexes: [
+        {
+          name: "idx_settings_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+        {
+          name: "idx_settings_category",
+          fields: ["category"],
+          description: "Index cho category",
+        },
+        {
+          name: "idx_settings_store_category_key",
+          fields: ["store_id", "category", "key"],
+          unique: true,
+          description: "Index composite duy nhất",
+        },
+      ],
+    },
+
+    feature_flags: {
+      description: "Quản lý tính năng bật/tắt động",
+      cols: [
+        { ...CommonFields.id.autoIncrement },
+        { ...CommonFields.storeId },
+        {
+          name: "feature_name",
+          type: "varchar",
+          length: 100,
+          required: true,
+          unique: true,
+          index: true,
+          description: "Tên tính năng",
+        },
+        {
+          name: "is_enabled",
+          type: "boolean",
+          default: false,
+          description: "Trạng thái bật/tắt",
+        },
+        {
+          name: "rollout_percentage",
+          type: "integer",
+          default: 100,
+          description: "Phần trăm rollout (0-100)",
+        },
+        {
+          name: "target_users",
+          type: "json",
+          nullable: true,
+          description: "Danh sách user target",
+        },
+        {
+          name: "start_date",
+          type: "timestamp",
+          nullable: true,
+          description: "Thời điểm bắt đầu",
+        },
+        {
+          name: "end_date",
+          type: "timestamp",
+          nullable: true,
+          description: "Thời điểm kết thúc",
+        },
+        {
+          name: "description",
+          type: "varchar",
+          length: 500,
+          nullable: true,
+          description: "Mô tả tính năng",
+        },
+        { ...CommonFields.timestamps.createdAt },
+      ],
+      indexes: [
+        {
+          name: "idx_feature_flags_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+      ],
+    },
+
+    business_rules: {
+      description: "Quy tắc kinh doanh có thể cấu hình",
+      cols: [
+        { ...CommonFields.id.autoIncrement },
+        { ...CommonFields.storeId },
+        {
+          name: "rule_name",
+          type: "varchar",
+          length: 100,
+          required: true,
+          unique: true,
+          index: true,
+          description: "Tên quy tắc",
+        },
+        {
+          name: "rule_type",
+          type: "varchar",
+          length: 20,
+          required: true,
+          enum: ["validation", "calculation", "workflow", "policy"],
+          description: "Loại quy tắc",
+        },
+        {
+          name: "conditions",
+          type: "json",
+          nullable: true,
+          description: "Điều kiện áp dụng",
+        },
+        {
+          name: "actions",
+          type: "json",
+          nullable: true,
+          description: "Hành động thực hiện",
+        },
+        {
+          name: "priority",
+          type: "integer",
+          default: 0,
+          description: "Thứ tự ưu tiên",
+        },
+        { ...CommonFields.boolean.isActive },
+        {
+          name: "effective_from",
+          type: "timestamp",
+          nullable: true,
+          description: "Hiệu lực từ",
+        },
+        {
+          name: "effective_to",
+          type: "timestamp",
+          nullable: true,
+          description: "Hiệu lực đến",
+        },
+        {
+          name: "description",
+          type: "varchar",
+          length: 500,
+          nullable: true,
+          description: "Mô tả quy tắc",
+        },
+        { ...CommonFields.timestamps.createdAt },
+        { ...CommonFields.timestamps.updatedAt },
+      ],
+      indexes: [
+        {
+          name: "idx_business_rules_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+      ],
+    },
+
+    workflow_templates: {
+      description: "Template quy trình làm việc",
+      cols: [
+        { ...CommonFields.id.autoIncrement },
+        { ...CommonFields.storeId },
+        {
+          name: "template_name",
+          type: "varchar",
+          length: 100,
+          required: true,
+          unique: true,
+          index: true,
+          description: "Tên template",
+        },
+        {
+          name: "workflow_type",
+          type: "varchar",
+          length: 20,
+          required: true,
+          enum: ["sequential", "parallel", "conditional"],
+          description: "Loại workflow",
+        },
+        {
+          name: "steps",
+          type: "json",
+          required: true,
+          description: "Các bước workflow",
+        },
+        {
+          name: "trigger_conditions",
+          type: "json",
+          nullable: true,
+          description: "Điều kiện kích hoạt",
+        },
+        {
+          name: "notification_rules",
+          type: "json",
+          nullable: true,
+          description: "Quy tắc thông báo",
+        },
+        {
+          name: "escalation_rules",
+          type: "json",
+          nullable: true,
+          description: "Quy tắc leo thang",
+        },
+        { ...CommonFields.boolean.isActive },
+        {
+          name: "version",
+          type: "varchar",
+          length: 10,
+          default: "1.0",
+          description: "Phiên bản template",
+        },
+        {
+          name: "description",
+          type: "varchar",
+          length: 500,
+          nullable: true,
+          description: "Mô tả template",
+        },
+        { ...CommonFields.timestamps.createdAt },
+        { ...CommonFields.timestamps.updatedAt },
+      ],
+      indexes: [
+        {
+          name: "idx_workflow_templates_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+      ],
+    },
+
+    ui_configurations: {
+      description: "Cấu hình giao diện người dùng",
+      cols: [
+        { ...CommonFields.id.autoIncrement },
+        { ...CommonFields.storeId },
+        {
+          name: "screen_name",
+          type: "varchar",
+          length: 100,
+          required: true,
+          description: "Tên màn hình",
+        },
+        {
+          name: "component_name",
+          type: "varchar",
+          length: 100,
+          required: true,
+          description: "Tên component",
+        },
+        {
+          name: "config_type",
+          type: "varchar",
+          length: 20,
+          required: true,
+          enum: ["layout", "styling", "behavior", "visibility"],
+          description: "Loại cấu hình",
+        },
+        {
+          name: "config_data",
+          type: "json",
+          required: true,
+          description: "Dữ liệu cấu hình",
+        },
+        {
+          name: "device_type",
+          type: "varchar",
+          length: 20,
+          default: "all",
+          enum: ["mobile", "tablet", "desktop", "all"],
+          description: "Loại thiết bị",
+        },
+        {
+          name: "user_role",
+          type: "varchar",
+          length: 20,
+          default: "all",
+          enum: ["admin", "staff", "cashier", "all"],
+          description: "Role người dùng",
+        },
+        { ...CommonFields.boolean.isActive },
+        {
+          name: "priority",
+          type: "integer",
+          default: 0,
+          description: "Thứ tự ưu tiên",
+        },
+        {
+          name: "description",
+          type: "varchar",
+          length: 500,
+          nullable: true,
+          description: "Mô tả cấu hình",
+        },
+        { ...CommonFields.timestamps.createdAt },
+        { ...CommonFields.timestamps.updatedAt },
+      ],
+      indexes: [
+        {
+          name: "idx_ui_configurations_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+        {
+          name: "idx_ui_configurations_screen_component",
+          fields: ["screen_name", "component_name"],
+          unique: true,
+          description: "Index duy nhất",
+        },
+      ],
+    },
+
+    integration_configs: {
+      description: "Cấu hình tích hợp hệ thống ngoài",
+      cols: [
+        { ...CommonFields.id.autoIncrement },
+        { ...CommonFields.storeId },
+        {
+          name: "integration_name",
+          type: "varchar",
+          length: 100,
+          required: true,
+          unique: true,
+          index: true,
+          description: "Tên hệ thống tích hợp",
+        },
+        {
+          name: "provider",
+          type: "varchar",
+          length: 100,
+          required: true,
+          description: "Nhà cung cấp",
+        },
+        {
+          name: "config_data",
+          type: "json",
+          required: true,
+          description: "Thông tin cấu hình",
+        },
+        {
+          name: "is_encrypted",
+          type: "boolean",
+          default: true,
+          description: "Dữ liệu đã mã hóa",
+        },
+        { ...CommonFields.boolean.isActive },
+        {
+          name: "is_sandbox",
+          type: "boolean",
+          default: true,
+          description: "Môi trường sandbox",
+        },
+        {
+          name: "webhook_url",
+          type: "url",
+          nullable: true,
+          description: "URL webhook",
+        },
+        {
+          name: "webhook_secret",
+          type: "varchar",
+          length: 100,
+          nullable: true,
+          description: "Secret key webhook",
+        },
+        {
+          name: "rate_limit",
+          type: "integer",
+          nullable: true,
+          description: "Giới hạn request/phút",
+        },
+        {
+          name: "timeout",
+          type: "integer",
+          default: 30,
+          description: "Timeout (giây)",
+        },
+        {
+          name: "retry_count",
+          type: "integer",
+          default: 3,
+          description: "Số lần retry",
+        },
+        {
+          name: "last_sync",
+          type: "timestamp",
+          nullable: true,
+          description: "Thời gian sync gần nhất",
+        },
+        {
+          name: "description",
+          type: "varchar",
+          length: 500,
+          nullable: true,
+          description: "Mô tả tích hợp",
+        },
+        { ...CommonFields.timestamps.createdAt },
+        { ...CommonFields.timestamps.updatedAt },
+      ],
+      indexes: [
+        {
+          name: "idx_integration_configs_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+      ],
+    },
+  },
+};
+
+// ========================
+// ANALYTICS DATABASE SCHEMA
+// ========================
+
+const analytics: DatabaseSchema = {
+  version: "1.0",
+  database_name: "analytics",
+  description: "Báo cáo, phân tích và audit trail",
+  type_mapping: SQLITE_TYPE_MAPPING,
+  schemas: {
+    reports: {
+      description: "Báo cáo và phân tích dữ liệu",
+      cols: [
+        { ...CommonFields.id.autoIncrement },
+        { ...CommonFields.storeId },
+        {
+          name: "user_id",
+          type: "integer",
+          nullable: true,
+          description: "Người tạo báo cáo",
+        },
+        {
+          name: "report_type",
+          type: "varchar",
+          length: 50,
+          required: true,
+          enum: ["revenue", "inventory", "customer", "transaction"],
+          index: true,
+          description: "Loại báo cáo",
+        },
+        {
+          name: "report_name",
+          type: "varchar",
+          length: 100,
+          required: true,
+          description: "Tên báo cáo",
+        },
+        {
+          name: "date_from",
+          type: "date",
+          required: true,
+          description: "Ngày bắt đầu",
+        },
+        {
+          name: "date_to",
+          type: "date",
+          required: true,
+          description: "Ngày kết thúc",
+        },
+        {
+          name: "filters",
+          type: "json",
+          nullable: true,
+          description: "Bộ lọc",
+        },
+        {
+          name: "data",
+          type: "json",
+          nullable: true,
+          description: "Dữ liệu báo cáo",
+        },
+        {
+          name: "file_path",
+          type: "varchar",
+          length: 255,
+          nullable: true,
+          description: "Đường dẫn file",
+        },
+        {
+          name: "status",
+          type: "varchar",
+          length: 20,
+          default: "generated",
+          enum: ["generated", "processing", "completed", "failed"],
+          description: "Trạng thái",
+        },
+        { ...CommonFields.timestamps.createdAt },
+      ],
+      indexes: [
+        {
+          name: "idx_reports_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+        {
+          name: "idx_reports_report_type",
+          fields: ["report_type"],
+          description: "Index cho report_type",
+        },
+        {
+          name: "idx_reports_created_at",
+          fields: ["created_at"],
+          description: "Index cho thời gian tạo",
+        },
+      ],
+    },
+
+    audit_logs: {
+      description: "Nhật ký kiểm toán hệ thống",
+      cols: [
+        { ...CommonFields.id.autoIncrement },
+        {
+          name: "store_id",
+          type: "uuid",
+          nullable: true,
+          index: true,
+          description: "Cửa hàng liên quan",
+        },
+        {
+          name: "user_id",
+          type: "integer",
+          nullable: true,
+          index: true,
+          description: "Người thực hiện",
+        },
+        {
+          name: "action",
+          type: "varchar",
+          length: 50,
+          required: true,
+          enum: ["create", "update", "delete", "view"],
+          description: "Hành động",
+        },
+        {
+          name: "table_name",
+          type: "varchar",
+          length: 100,
+          required: true,
+          index: true,
+          description: "Tên bảng",
+        },
+        {
+          name: "record_id",
+          type: "varchar",
+          length: 100,
+          nullable: true,
+          description: "ID bản ghi",
+        },
+        {
+          name: "old_values",
+          type: "json",
+          nullable: true,
+          description: "Giá trị cũ",
+        },
+        {
+          name: "new_values",
+          type: "json",
+          nullable: true,
+          description: "Giá trị mới",
+        },
+        {
+          name: "ip_address",
+          type: "varchar",
+          length: 45,
+          nullable: true,
+          description: "Địa chỉ IP",
+        },
+        {
+          name: "user_agent",
+          type: "varchar",
+          length: 255,
+          nullable: true,
+          description: "Thông tin trình duyệt",
+        },
+        { ...CommonFields.timestamps.createdAt },
+      ],
+      indexes: [
+        {
+          name: "idx_audit_logs_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+        {
+          name: "idx_audit_logs_user_id",
+          fields: ["user_id"],
+          description: "Index cho user_id",
+        },
+        {
+          name: "idx_audit_logs_table_name",
+          fields: ["table_name"],
+          description: "Index cho table_name",
+        },
+        {
+          name: "idx_audit_logs_created_at",
+          fields: ["created_at"],
+          description: "Index cho thời gian",
+        },
+      ],
+    },
+  },
+};
+
+export {
+  // Schemas
+  oms,
+  payment,
+  media,
+  product,
+  inventory,
+  fnb,
+  scm,
+  config,
+  analytics,
+};

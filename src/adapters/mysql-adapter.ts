@@ -2,26 +2,31 @@
 // src/adapters/mysql-adapter.ts (REFACTORED)
 // ========================
 
-import { BaseAdapter } from "../core/base-adapter";
+import { BaseAdapter } from "@/core/base-adapter";
 import {
   DatabaseType,
+  DbConfig,
   EntitySchemaDefinition,
   ForeignKeyDefinition,
   ForeignKeyInfo,
   IConnection,
   IndexDefinition,
   SchemaDefinition,
-} from "../types/orm.types";
-import { MySQLConfig } from "../types/database-config-types";
-import { QueryHelper } from "../utils/query-helper";
+} from "@/types/orm.types";
+import { MySQLConfig } from "@/types/database-config-types";
+import { QueryHelper } from "@/utils/query-helper";
 
-import { createModuleLogger, ORMModules } from "../logger";
+import { createModuleLogger, ORMModules } from "@/logger";
 const logger = createModuleLogger(ORMModules.MYSQL_ADAPTER);
 
 export class MySQLAdapter extends BaseAdapter {
   type: DatabaseType = "mysql";
   databaseType: DatabaseType = "mysql";
   pool: any = null;
+
+  constructor(config: DbConfig) {
+    super(config);
+  }
 
   /*
   Chuyển 2 hàm isSupported và connect về luôn Adapter, không cần tạo connection nữa
@@ -46,7 +51,10 @@ export class MySQLAdapter extends BaseAdapter {
     }
   }
 
-  async connect(config: MySQLConfig): Promise<IConnection> {
+  async connect(schemaKey?: string): Promise<IConnection> {
+    if (!this.dbConfig) throw Error("No database configuration provided.");
+    const config = this.dbConfig as MySQLConfig;
+
     logger.debug("Connecting to MySQL", {
       database: config.database,
       host: config.host || "localhost",
@@ -559,6 +567,40 @@ export class MySQLAdapter extends BaseAdapter {
       });
     }
   }
+
+  // OVERRIDE createTable()
+  /* async createTable(
+    tableName: string,
+    schema: SchemaDefinition,
+    foreignKeys?: ForeignKeyDefinition[]
+  ): Promise<void> {
+    logger.debug("Creating MySQL table with foreign keys", { tableName });
+
+    this.ensureConnected();
+
+    const columns: string[] = [];
+
+    for (const [fieldName, fieldDef] of Object.entries(schema)) {
+      const columnDef = this.buildColumnDefinition(fieldName, fieldDef);
+      columns.push(columnDef);
+    }
+
+    // ✅ Build inline foreign key constraints
+    const constraints = this.buildInlineConstraints(
+      tableName,
+      foreignKeys || []
+    );
+    const allColumns = [...columns, ...constraints].join(", ");
+
+    const query = this.buildCreateTableQuery(tableName, allColumns);
+
+    await this.executeRaw(query, []);
+
+    logger.info("MySQL table created with foreign keys", {
+      tableName,
+      foreignKeyCount: constraints.length,
+    });
+  } */
 
   // ==========================================
   // OVERRIDE INSERT ONE (không có RETURNING)

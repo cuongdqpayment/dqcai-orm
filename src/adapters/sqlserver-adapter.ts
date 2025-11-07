@@ -1,8 +1,8 @@
 // ========================
-// src/adapters/sqlserver-adapter.ts (REFACTORED)
+// src/adapters/sqlserver-adapter.ts
 // ========================
 
-import { BaseAdapter } from "../core/base-adapter";
+import { BaseAdapter } from "@/core/base-adapter";
 import {
   DatabaseType,
   EntitySchemaDefinition,
@@ -11,16 +11,20 @@ import {
   IConnection,
   IndexDefinition,
   SchemaDefinition,
-} from "../types/orm.types";
-import { QueryHelper } from "../utils/query-helper";
-import { createModuleLogger, ORMModules } from "../logger";
-import { SQLServerConfig } from "../types";
+} from "@/types/orm.types";
+import { QueryHelper } from "@/utils/query-helper";
+import { createModuleLogger, ORMModules } from "@/logger";
+import { SQLServerConfig } from "@/types/database-config-types";
 const logger = createModuleLogger(ORMModules.SQLSERVER_ADAPTER);
 
 export class SQLServerAdapter extends BaseAdapter {
   type: DatabaseType = "sqlserver";
   databaseType: DatabaseType = "sqlserver";
   private pool: any = null;
+  constructor(config: SQLServerConfig) {
+    super(config);
+  }
+
 
   /*
   Chuyển 2 hàm isSupported và connect về luôn Adapter, không cần tạo connection nữa
@@ -45,7 +49,10 @@ export class SQLServerAdapter extends BaseAdapter {
     }
   }
 
-  async connect(config: SQLServerConfig): Promise<IConnection> {
+  async connect(schemaKey?: string): Promise<IConnection> {
+    if (!this.dbConfig) throw Error("No database configuration provided.");
+    const config = this.dbConfig as SQLServerConfig;
+
     logger.debug("Connecting to SQL Server", {
       database: config.database,
       host: config.host || "localhost",
@@ -431,8 +438,7 @@ export class SQLServerAdapter extends BaseAdapter {
     this.ensureConnected();
 
     const constraintName =
-      foreignKeyDef.name ||
-      `fk_${tableName}_${foreignKeyDef.fields.join("_")}`;
+      foreignKeyDef.name || `fk_${tableName}_${foreignKeyDef.fields.join("_")}`;
     const columns = foreignKeyDef.fields
       .map((c) => QueryHelper.quoteIdentifier(c, this.type))
       .join(", ");
@@ -451,8 +457,10 @@ export class SQLServerAdapter extends BaseAdapter {
       this.type
     )} (${refColumns})`;
 
-    if (foreignKeyDef.on_delete) query += ` ON DELETE ${foreignKeyDef.on_delete}`;
-    if (foreignKeyDef.on_update) query += ` ON UPDATE ${foreignKeyDef.on_update}`;
+    if (foreignKeyDef.on_delete)
+      query += ` ON DELETE ${foreignKeyDef.on_delete}`;
+    if (foreignKeyDef.on_update)
+      query += ` ON UPDATE ${foreignKeyDef.on_update}`;
 
     await this.executeRaw(query, []);
     logger.info("Foreign key created successfully (SQL Server)", {
@@ -535,6 +543,41 @@ export class SQLServerAdapter extends BaseAdapter {
       });
     }
   }
+
+  // OVERRIDE createTable() của base-adapter
+  /* async createTable(
+    tableName: string,
+    schema: SchemaDefinition,
+    foreignKeys?: ForeignKeyDefinition[]
+  ): Promise<void> {
+    logger.debug("Creating SQL Server table with foreign keys", { tableName });
+
+    this.ensureConnected();
+
+    const columns: string[] = [];
+
+    for (const [fieldName, fieldDef] of Object.entries(schema)) {
+      const columnDef = this.buildColumnDefinition(fieldName, fieldDef);
+      columns.push(columnDef);
+    }
+
+    // ✅ Build inline foreign key constraints
+    const constraints = this.buildInlineConstraints(
+      tableName,
+      foreignKeys || []
+    );
+    const allColumns = [...columns, ...constraints].join(", ");
+
+    const query = this.buildCreateTableQuery(tableName, allColumns);
+
+    await this.executeRaw(query, []);
+
+    logger.info("SQL Server table created with foreign keys", {
+      tableName,
+      foreignKeyCount: constraints.length,
+    });
+  } */
+
   // ==========================================
   // OVERRIDE INSERT ONE (với OUTPUT INSERTED.*)
   // ==========================================
