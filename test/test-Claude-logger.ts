@@ -7,6 +7,7 @@ import {
   DatabaseManager,
   SQLiteAdapter,
   SQLiteConfig,
+  ForeignKeyInfo,
 } from "../src/index";
 
 import { core as coreSchema } from "./coreSchema";
@@ -90,14 +91,15 @@ async function verifyForeignKeys() {
 
   for (const table of tables) {
     const fks = await adapter.getForeignKeys(table);
+
     console.log(`\n📋 ${table}:`);
     if (fks.length === 0) {
       console.log("  ❌ No foreign keys found");
     } else {
-      fks.forEach((fk) => {
-        console.log(`  ✅ ${fk.name}:`);
+      fks.forEach((fk: ForeignKeyInfo) => {
+        console.log(`  ✅ ${fk.constraintName}:`);
         console.log(
-          `     ${fk.tableName} -> ${fk.referencedTable}.${fk.referencedColumns}`
+          `     ${fk.columnName} -> ${fk.referencedTable}.${fk.referencedColumn}`
         );
         console.log(`     ON DELETE ${fk.onDelete} | ON UPDATE ${fk.onUpdate}`);
       });

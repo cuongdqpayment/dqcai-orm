@@ -767,7 +767,7 @@ export class DatabaseFactory {
    * Reset tất cả registries (dùng cho testing)
    */
   public static reset(): void {
-    logger.warn("Resetting all registries", {
+    logger.trace("Resetting all registries", {
       stats: {
         schemas: SchemaRegistry.size,
         adapterClasses: AdapterRegistry.size,

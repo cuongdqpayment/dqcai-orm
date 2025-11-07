@@ -15,6 +15,7 @@ import {
 import { QueryHelper } from "../utils/query-helper";
 import { createModuleLogger, ORMModules } from "../logger";
 import { SQLiteConfig } from "../types";
+import { log } from "console";
 const logger = createModuleLogger(ORMModules.SQLITE_ADAPTER);
 
 export class SQLiteAdapter extends BaseAdapter {
@@ -391,10 +392,6 @@ export class SQLiteAdapter extends BaseAdapter {
     logger.trace("Executing raw SQLite query", {
       query,
       params,
-      // querySnippet:
-      //   query.substring(0, Math.min(100, query.length)) +
-      //   (query.length > 100 ? "..." : ""),
-      // paramsCount: params?.length || 0,
     });
 
     if (!this.db) {
@@ -403,29 +400,61 @@ export class SQLiteAdapter extends BaseAdapter {
     }
 
     // Sanitize params trước khi execute
-    // const sanitizedParams = params?.map((p) => this.sanitizeValue(p));
     const hasParams = params && params.length > 0;
     const sanitizedParams = hasParams
       ? params.map((p) => this.sanitizeValue(p))
       : undefined;
 
     try {
-      const isSelect = query.trim().toUpperCase().startsWith("SELECT");
+      const upperQuery = query.trim().toUpperCase();
+      const isSelect = upperQuery.startsWith("SELECT");
+      const isPragma = upperQuery.startsWith("PRAGMA ");
 
       if (isSelect) {
-        // SELECT query
+        // SELECT query: Always returns rows
         logger.trace("Executing SELECT query");
         const rows = hasParams
           ? this.db.prepare(query).all(sanitizedParams)
           : this.db.prepare(query).all();
-
+        logger.trace("Query execution SELECT result", { rows });
         return { rows, rowCount: rows.length };
+      } else if (isPragma) {
+        // PRAGMA: Distinguish between Query (no '=') and Statement (with '=')
+        const trimmedQuery = query.trim();
+        const hasEquals = trimmedQuery.includes("=");
+        const queryType = hasEquals ? "PRAGMA Statement" : "PRAGMA Query";
+
+        logger.trace(`Executing ${queryType} query`);
+
+        if (hasEquals) {
+          // PRAGMA Statement: Use .run() (no rows returned)
+          const info = hasParams
+            ? this.db.prepare(query).run(sanitizedParams)
+            : this.db.prepare(query).run();
+          logger.trace("Query execution PRAGMA Statement result", { info });
+          return {
+            rows: [],
+            rowCount: info.changes,
+            rowsAffected: info.changes,
+            lastInsertId: info.lastInsertRowid,
+            lastInsertRowid: info.lastInsertRowid,
+          };
+        } else {
+          // PRAGMA Query: Use .all() (returns rows)
+          const rows = hasParams
+            ? this.db.prepare(query).all(sanitizedParams)
+            : this.db.prepare(query).all();
+          logger.trace("Query execution PRAGMA Query result", { rows });
+          return { rows, rowCount: rows.length };
+        }
       } else {
-        // Non-SELECT query (INSERT, UPDATE, DELETE, CREATE, etc.)
+        // Non-SELECT, non-PRAGMA query (INSERT, UPDATE, DELETE, CREATE, etc.)
         logger.trace("Executing non-SELECT query");
         const info = hasParams
           ? this.db.prepare(query).run(sanitizedParams)
           : this.db.prepare(query).run();
+
+        logger.trace("Query execution RUN result", { info });
 
         return {
           rows: [],

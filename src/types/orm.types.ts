@@ -148,15 +148,15 @@ export enum ForeignKeyAction {
 
 /**
  * Foreign Key Information
+ * Kết quả query foreignKey
  */
 export interface ForeignKeyInfo {
-  name: string; // Tên foreign key
-  tableName: string; // Bảng chứa foreign key
-  columns: string[]; // Cột(s) trong bảng hiện tại
-  referencedTable: string; // Bảng được tham chiếu
-  referencedColumns: string[]; // Cột(s) trong bảng được tham chiếu
-  onDelete?: ForeignKeyAction; // Hành động khi DELETE
-  onUpdate?: ForeignKeyAction; // Hành động khi UPDATE
+  constraintName: string;
+  columnName: string;
+  referencedTable: string;
+  referencedColumn: string;
+  onDelete?: ForeignKeyAction;
+  onUpdate?: ForeignKeyAction;
 }
 
 /**
