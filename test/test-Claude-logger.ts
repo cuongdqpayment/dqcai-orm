@@ -9,7 +9,7 @@ import {
   SQLiteConfig,
 } from "../src/index";
 
-import { core as coreSchema } from "./schemas.sqlite";
+import { core as coreSchema } from "./coreSchema";
 const dbConfig: SQLiteConfig = {
   databaseType: "sqlite",
   database: "core",
@@ -81,6 +81,30 @@ serviceManager.registerServices([
   },
 ]);
 
+async function verifyForeignKeys() {
+  console.log("\n🔍 Verifying Foreign Keys...");
+
+  const adapter = DatabaseManager.getAdapterInstance("core") as SQLiteAdapter;
+
+  const tables = ["stores", "users", "user_sessions", "settings"];
+
+  for (const table of tables) {
+    const fks = await adapter.getForeignKeys(table);
+    console.log(`\n📋 ${table}:`);
+    if (fks.length === 0) {
+      console.log("  ❌ No foreign keys found");
+    } else {
+      fks.forEach((fk) => {
+        console.log(`  ✅ ${fk.name}:`);
+        console.log(
+          `     ${fk.tableName} -> ${fk.referencedTable}.${fk.referencedColumns}`
+        );
+        console.log(`     ON DELETE ${fk.onDelete} | ON UPDATE ${fk.onUpdate}`);
+      });
+    }
+  }
+}
+
 // ========== Main Function ==========
 async function main() {
   try {
@@ -110,6 +134,9 @@ async function main() {
       console.error("❌ Failed to initialize schema:", error);
       throw error;
     }
+
+    // Kiểm tra xem các foreignkey được tạo không?
+    await verifyForeignKeys();
 
     // Get services
     const enterpriseService = await serviceManager.getService(

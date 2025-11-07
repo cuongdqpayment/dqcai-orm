@@ -77,7 +77,7 @@ export abstract class BaseAdapter implements IAdapter {
     indexDef: IndexDefinition
   ): Promise<void>;
   abstract dropIndex(tableName: string, indexName: string): Promise<void>;
-  
+
   abstract executeRaw(query: string | any, params?: any[]): Promise<any>;
   abstract tableExists(tableName: string): Promise<boolean>;
   abstract getTableInfo(
@@ -146,106 +146,49 @@ export abstract class BaseAdapter implements IAdapter {
   // ==========================================
   // 📋 SCHEMA MANAGEMENT
   // ==========================================
-
- /*  async createTable(
+  protected buildInlineConstraints(
     tableName: string,
-    schema: SchemaDefinition
+    foreignKeys: ForeignKeyDefinition[]
+  ): string[] {
+    const constraints: string[] = [];
+
+    for (const fk of foreignKeys) {
+      const constraint = this.buildForeignKeyConstraint(tableName, fk);
+      if (constraint) {
+        constraints.push(constraint);
+      }
+    }
+    return constraints;
+  }
+
+  async createTable(
+    tableName: string,
+    schema: SchemaDefinition,
+    foreignKeys?: ForeignKeyDefinition[]
   ): Promise<void> {
     logger.trace("Creating table", { tableName, schema });
 
     this.ensureConnected();
     const columns: string[] = [];
-    const constraints: string[] = [];
 
     for (const [fieldName, fieldDef] of Object.entries(schema)) {
       const columnDef = this.buildColumnDefinition(fieldName, fieldDef);
       columns.push(columnDef);
-
-      if (fieldDef.references) {
-        constraints.push(this.buildForeignKeyConstraint(fieldName, fieldDef));
-      }
     }
 
+    // ✅ Thêm constraints (bao gồm foreign keys)
+    const constraints = this.buildInlineConstraints(
+      tableName,
+      foreignKeys || []
+    );
     const allColumns = [...columns, ...constraints].join(", ");
+
     const query = this.buildCreateTableQuery(tableName, allColumns);
 
     await this.executeRaw(query, []);
 
     logger.info("Table created successfully", { tableName });
-  } */
-
-  // Trong file: base-adapter.ts
-// Thêm phương thức mới để build foreign keys trong CREATE TABLE
-
-protected buildInlineConstraints(
-  schema: SchemaDefinition,
-  foreignKeys?: ForeignKeyDefinition[]
-): string[] {
-  const constraints: string[] = [];
-
-  // ✅ Foreign keys từ field references
-  for (const [fieldName, fieldDef] of Object.entries(schema)) {
-    if (fieldDef.references) {
-      constraints.push(this.buildForeignKeyConstraint(fieldName, fieldDef));
-    }
   }
-
-  // ✅ Foreign keys từ danh sách riêng (nếu có)
-  if (foreignKeys && foreignKeys.length > 0) {
-    for (const fk of foreignKeys) {
-      const quotedColumns = fk.fields
-        .map(col => QueryHelper.quoteIdentifier(col, this.type))
-        .join(", ");
-      
-      const quotedRefTable = QueryHelper.quoteIdentifier(
-        fk.references.table,
-        this.type
-      );
-      
-      const quotedRefColumns = fk.references.fields
-        .map(col => QueryHelper.quoteIdentifier(col, this.type))
-        .join(", ");
-
-      let constraint = `CONSTRAINT ${QueryHelper.quoteIdentifier(fk.name, this.type)} `;
-      constraint += `FOREIGN KEY (${quotedColumns}) `;
-      constraint += `REFERENCES ${quotedRefTable}(${quotedRefColumns})`;
-
-      if (fk.on_delete) constraint += ` ON DELETE ${fk.on_delete}`;
-      if (fk.on_update) constraint += ` ON UPDATE ${fk.on_update}`;
-
-      constraints.push(constraint);
-    }
-  }
-
-  return constraints;
-}
-
-// ✅ Cập nhật createTable để nhận foreignKeys
-async createTable(
-  tableName: string,
-  schema: SchemaDefinition,
-  foreignKeys?: ForeignKeyDefinition[]
-): Promise<void> {
-  logger.trace("Creating table", { tableName, schema });
-
-  this.ensureConnected();
-  const columns: string[] = [];
-
-  for (const [fieldName, fieldDef] of Object.entries(schema)) {
-    const columnDef = this.buildColumnDefinition(fieldName, fieldDef);
-    columns.push(columnDef);
-  }
-
-  // ✅ Thêm constraints (bao gồm foreign keys)
-  const constraints = this.buildInlineConstraints(schema, foreignKeys);
-  const allColumns = [...columns, ...constraints].join(", ");
-  
-  const query = this.buildCreateTableQuery(tableName, allColumns);
-
-  await this.executeRaw(query, []);
-
-  logger.info("Table created successfully", { tableName });
-}
 
   async dropTable(tableName: string): Promise<void> {
     logger.info("Dropping table", { tableName });
@@ -377,7 +320,8 @@ async createTable(
     logger.trace("Executing find query", {
       tableName,
       query: query.substring(0, 150),
-      paramCount: params.length,
+      params,
+      // paramCount: params.length,
     });
 
     const result = await this.executeRaw(query, params);
@@ -622,7 +566,7 @@ async createTable(
     fieldName: string,
     fieldDef: FieldDefinition
   ): string {
-    logger.trace("Building column definition", { fieldName, fieldDef });
+    // logger.trace("Building column definition", { fieldName, fieldDef });
 
     const quotedName = QueryHelper.quoteIdentifier(fieldName, this.type);
     let sqlType = this.mapFieldTypeToDBType(fieldDef.type, fieldDef.length);
@@ -689,32 +633,48 @@ async createTable(
   }
 
   protected buildForeignKeyConstraint(
-    fieldName: string,
-    fieldDef: FieldDefinition
+    tableName: string,
+    foreignKey: ForeignKeyDefinition
   ): string {
     logger.trace("Building foreign key constraint", {
-      fieldName,
-      references: fieldDef.references,
+      tableName,
+      foreignKey,
     });
 
-    if (!fieldDef.references) return "";
+    if (!foreignKey || !foreignKey.references) return "";
 
-    const quotedField = QueryHelper.quoteIdentifier(fieldName, this.type);
+    // Quote các field names trong bảng hiện tại
+    const quotedFields = foreignKey.fields
+      .map((field) => QueryHelper.quoteIdentifier(field, this.type))
+      .join(", ");
+
+    // Quote tên bảng được tham chiếu
     const quotedRefTable = QueryHelper.quoteIdentifier(
-      fieldDef.references.table,
-      this.type
-    );
-    const quotedRefField = QueryHelper.quoteIdentifier(
-      fieldDef.references.field,
+      foreignKey.references.table,
       this.type
     );
 
-    let constraint = `FOREIGN KEY (${quotedField}) REFERENCES ${quotedRefTable}(${quotedRefField})`;
+    // Quote các field names trong bảng được tham chiếu
+    const quotedRefFields = foreignKey.references.fields
+      .map((field) => QueryHelper.quoteIdentifier(field, this.type))
+      .join(", ");
 
-    if (fieldDef.references.onDelete)
-      constraint += ` ON DELETE ${fieldDef.references.onDelete}`;
-    if (fieldDef.references.onUpdate)
-      constraint += ` ON UPDATE ${fieldDef.references.onUpdate}`;
+    // Tạo constraint với tên foreign key
+    let constraint = `CONSTRAINT ${QueryHelper.quoteIdentifier(
+      foreignKey.name,
+      this.type
+    )} `;
+    constraint += `FOREIGN KEY (${quotedFields}) REFERENCES ${quotedRefTable}(${quotedRefFields})`;
+
+    // Thêm ON DELETE action nếu có
+    if (foreignKey.on_delete) {
+      constraint += ` ON DELETE ${foreignKey.on_delete}`;
+    }
+
+    // Thêm ON UPDATE action nếu có
+    if (foreignKey.on_update) {
+      constraint += ` ON UPDATE ${foreignKey.on_update}`;
+    }
 
     return constraint;
   }

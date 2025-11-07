@@ -83,12 +83,6 @@ export interface FieldDefinition {
   index?: boolean;
   enum?: string[] | number[];
   comment?: string;
-  references?: {
-    table: string;
-    field: string;
-    onDelete?: "CASCADE" | "SET NULL" | "RESTRICT" | "NO ACTION";
-    onUpdate?: "CASCADE" | "SET NULL" | "RESTRICT" | "NO ACTION";
-  };
 }
 
 /**
@@ -103,10 +97,9 @@ export interface SchemaDefinition {
  */
 export interface EntitySchemaDefinition {
   name?: string; // Table/Collection name Same key
-  cols: FieldDefinition[]; // Columns/Fields
+  cols: FieldDefinition[];
   indexes?: IndexDefinition[];
-  foreign_keys?: ForeignKeyDefinition[]; // chấp nhận cả kiểu snail
-  foreignKeys?: ForeignKeyDefinition[]; // chấp nhận cả kiểu lamp
+  foreign_keys?: ForeignKeyDefinition[];
   options?: TableOptions;
   description?: string;
 }

@@ -20,7 +20,7 @@ const ORMModules = {
   MYSQL_ADAPTER: "MySQLAdapter",
   MARIADB_ADAPTER: "MariaDBAdapter",
   MONGODB_ADAPTER: "MongoDbAdapter",
-  SQLITE3_ADAPTER: "Sqlite3Adapter",
+  SQLITE_ADAPTER: "SqliteAdapter",
   SQLSERVER_ADAPTER: "SQLServerAdapter",
   ORACLE_ADAPTER: "OracleAdapter",
   MONGODB_CONNECTION_FACTORY: "MongoDBConnectionFactory",

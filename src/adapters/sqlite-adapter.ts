@@ -15,7 +15,7 @@ import {
 import { QueryHelper } from "../utils/query-helper";
 import { createModuleLogger, ORMModules } from "../logger";
 import { SQLiteConfig } from "../types";
-const logger = createModuleLogger(ORMModules.SQLITE3_ADAPTER);
+const logger = createModuleLogger(ORMModules.SQLITE_ADAPTER);
 
 export class SQLiteAdapter extends BaseAdapter {
   type: DatabaseType = "sqlite";
@@ -159,7 +159,7 @@ export class SQLiteAdapter extends BaseAdapter {
    * SQLite chỉ có: NULL, INTEGER, REAL, TEXT, BLOB
    */
   protected mapFieldTypeToDBType(fieldType: string, length?: number): string {
-    logger.trace("Mapping field type to SQLite", { fieldType, length });
+    // logger.trace("Mapping field type to SQLite", { fieldType, length });
 
     const typeMap: Record<string, string> = {
       // String types
@@ -201,7 +201,7 @@ export class SQLiteAdapter extends BaseAdapter {
     };
 
     const mappedType = typeMap[fieldType.toLowerCase()] || "TEXT";
-    logger.trace("Mapped type result", { fieldType, mappedType });
+    // logger.trace("Mapped type result", { fieldType, mappedType });
 
     return mappedType;
   }
@@ -224,7 +224,6 @@ export class SQLiteAdapter extends BaseAdapter {
 
     const lastInsertId = result.lastInsertId || result.lastInsertRowid;
 
-    // ✅ IMPROVED: Tự động detect PRIMARY KEY từ data
     let pkField: string;
 
     if (primaryKeys && primaryKeys.length > 0) {
@@ -390,10 +389,12 @@ export class SQLiteAdapter extends BaseAdapter {
 
   async executeRaw(query: string, params?: any[]): Promise<any> {
     logger.trace("Executing raw SQLite query", {
-      querySnippet:
-        query.substring(0, Math.min(100, query.length)) +
-        (query.length > 100 ? "..." : ""),
-      paramsCount: params?.length || 0,
+      query,
+      params,
+      // querySnippet:
+      //   query.substring(0, Math.min(100, query.length)) +
+      //   (query.length > 100 ? "..." : ""),
+      // paramsCount: params?.length || 0,
     });
 
     if (!this.db) {
@@ -520,7 +521,10 @@ export class SQLiteAdapter extends BaseAdapter {
     }
 
     // ✅ Build inline foreign key constraints
-    const constraints = this.buildInlineConstraints(schema, foreignKeys);
+    const constraints = this.buildInlineConstraints(
+      tableName,
+      foreignKeys || []
+    );
     const allColumns = [...columns, ...constraints].join(", ");
 
     const query = this.buildCreateTableQuery(tableName, allColumns);
@@ -688,12 +692,16 @@ export class SQLiteAdapter extends BaseAdapter {
 
     const result = await this.executeRaw(query, values);
 
+    logger.info("Inserted one record RESULT:", {
+      result,
+    });
+
     // ✅ Process result (query lại)
     const insertedRecord = await this.processInsertResult(
       tableName,
       result,
-      data,
-      ["id"]
+      data
+      // ["id"]
     );
 
     logger.info("Inserted one record successfully", {

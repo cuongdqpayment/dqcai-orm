@@ -1,7 +1,7 @@
 import { DatabaseSchema, SQLITE_TYPE_MAPPING } from "../src/index";
 
 const core: DatabaseSchema = {
-  version: "v1",
+  version: "1.0",
   database_name: "core",
   description:
     "Cơ sở dữ liệu hệ thống cốt lõi quản lý toàn bộ hoạt động của doanh nghiệp, bao gồm thông tin doanh nghiệp, cửa hàng và người dùng",
@@ -682,7 +682,7 @@ const core: DatabaseSchema = {
 };
 
 const oms: DatabaseSchema = {
-  version: "v1",
+  version: "1.0",
   database_type: "sqlite",
   database_name: "oms",
   description:
@@ -1137,7 +1137,7 @@ const oms: DatabaseSchema = {
 };
 
 const payment: DatabaseSchema = {
-  version: "v1",
+  version: "1.0",
   database_type: "sqlite",
   database_name: "payment",
   description:
@@ -1347,7 +1347,7 @@ const payment: DatabaseSchema = {
 };
 
 const media: DatabaseSchema = {
-  version: "v1",
+  version: "1.0",
   database_type: "sqlite",
   database_name: "media",
   description:
@@ -1608,7 +1608,7 @@ const media: DatabaseSchema = {
 };
 
 const product: DatabaseSchema = {
-  version: "v1",
+  version: "1.0",
   database_type: "sqlite",
   database_name: "product",
   description:
@@ -2350,7 +2350,7 @@ const product: DatabaseSchema = {
 };
 
 const inventory: DatabaseSchema = {
-  version: "v1",
+  version: "1.0",
   database_type: "sqlite",
   database_name: "inventory",
   description:
@@ -3313,7 +3313,7 @@ const inventory: DatabaseSchema = {
 };
 
 const fnb: DatabaseSchema = {
-  version: "v1",
+  version: "1.0",
   database_type: "sqlite",
   database_name: "fnb",
   description:
@@ -3514,7 +3514,7 @@ const fnb: DatabaseSchema = {
 };
 
 const scm: DatabaseSchema = {
-  version: "v1",
+  version: "1.0",
   database_type: "sqlite",
   database_name: "scm",
   description:
@@ -3858,7 +3858,7 @@ const scm: DatabaseSchema = {
 };
 
 const config: DatabaseSchema = {
-  version: "v1",
+  version: "1.0",
   database_name: "config",
   description:
     "Cơ sở dữ liệu quản lý cấu hình hệ thống - Lưu trữ tất cả các thiết lập, tham số cấu hình, quy tắc kinh doanh và feature flags của từng cửa hàng. Hỗ trợ tùy chỉnh linh hoạt theo nhu cầu kinh doanh cụ thể của từng store mà không cần thay đổi code ứng dụng.",
@@ -4514,7 +4514,7 @@ const config: DatabaseSchema = {
   },
 };
 const analisys: DatabaseSchema = {
-  version: "v1",
+  version: "1.0",
   database_name: "analytics",
   description:
     "Tập trung dữ liệu để tạo báo cáo, phân tích và lưu trữ nhật ký kiểm toán (audit trail) cho toàn hệ thống.",

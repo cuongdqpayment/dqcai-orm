@@ -176,7 +176,7 @@ export class SchemaVersionManager {
         isCompatible: true,
         action: "create_new",
         targetVersion: schema.version || "1.0.0",
-        message: "Schema chưa tồn tại, sẽ tạo mới",
+        message: "Schema not exist, create new",
       };
     }
 
@@ -196,7 +196,7 @@ export class SchemaVersionManager {
         action: "no_action",
         currentVersion,
         targetVersion,
-        message: "Schema version khớp, không cần thao tác",
+        message: "Schema version is the same, no action needed",
       };
     }
 
@@ -214,11 +214,11 @@ export class SchemaVersionManager {
         currentVersion,
         targetVersion,
         message:
-          `⚠️ CẢNH BÁO: Database version (${currentVersion}) mới hơn schema version (${targetVersion})!\n` +
-          `Không thể tự động downgrade. Các tùy chọn:\n` +
-          `1. Backup database hiện tại\n` +
-          `2. Xóa và tạo lại (MẤT DỮ LIỆU)\n` +
-          `3. Cập nhật schema definition lên version ${currentVersion}`,
+          `⚠️ WARNING: Database version (${currentVersion}) is newer than schema version (${targetVersion})!\n` +
+          `Can not downgrade automationally. Options choicese are:\n` +
+          `1. Backup current database\n` +
+          `2. Drop and recreate all tables(LOST ALL DATA)\n` +
+          `3. Update schema definition up to date with currentversion ${currentVersion}`,
       };
     }
 
@@ -235,18 +235,17 @@ export class SchemaVersionManager {
       currentVersion,
       targetVersion,
       message:
-        `📦 Phát hiện version mới: ${currentVersion} → ${targetVersion}\n` +
-        `Cần migration để cập nhật schema. Các tùy chọn:\n` +
-        `1. Tự động migration (nếu có script)\n` +
-        `2. Backup và tạo lại\n` +
-        `3. Migration thủ công`,
+        `📦 Having new version: ${currentVersion} → ${targetVersion}\n` +
+        `Needing migration to upate schema. Options choicese are:\n` +
+        `1. Automaticaly migration (if available migration script)\n` +
+        `2. Backup and recreate all tables(LOST ALL DATA)\n` +
+        `3. Manual Migration`,
     };
   }
 
   /**
    * ✅ Lưu version info sau khi tạo schema
    */
-  // schema-version-manager.ts
   public static async saveVersionInfo(
     dao: UniversalDAO<any>,
     schemaName: string,

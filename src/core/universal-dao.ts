@@ -378,7 +378,7 @@ export class UniversalDAO<TConnection extends IConnection = IConnection>
     }
 
     // ✅ 1. Tạo table với columns
-    await this.adapter.createTable(entityName, schemaDefinition);
+    await this.adapter.createTable(entityName, schemaDefinition, foreignKeys);
     logger.info("Table structure created", { entityName });
 
     // ✅ 2. Tạo indexes (nếu có)
@@ -414,13 +414,14 @@ export class UniversalDAO<TConnection extends IConnection = IConnection>
           // ⚠️ SQLite không hỗ trợ ALTER TABLE ADD FOREIGN KEY
           // Foreign keys phải được định nghĩa trong CREATE TABLE
           if (this.databaseType === "sqlite") {
-            logger.warn(
-              "SQLite foreign keys must be defined during table creation",
-              {
-                entityName,
-                foreignKeyName: fkDef.name,
-              }
-            );
+            // bỏ qua cảnh báo vì sqlite sẽ không tạo foreignKey độc lập
+            // logger.warn(
+            //   "SQLite foreign keys must be defined during table creation",
+            //   {
+            //     entityName,
+            //     foreignKeyName: fkDef.name,
+            //   }
+            // );
             continue;
           }
 

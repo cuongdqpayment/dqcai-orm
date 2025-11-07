@@ -1,8 +1,8 @@
-import { DatabaseSchema, MONGODB_TYPE_MAPPING } from "@dqcai/orm";
+import { DatabaseSchema, MONGODB_TYPE_MAPPING } from "../src/index";
 
 // Schema core cho hệ thống
 export const coreSchema: DatabaseSchema = {
-  version: "v1",
+  version: "1.0",
   database_type: "mongodb",
   database_name: "core",
   description:
@@ -271,8 +271,8 @@ export const coreSchema: DatabaseSchema = {
             table: "enterprises",
             fields: ["id"],
           },
-          onDelete: "CASCADE",
-          onUpdate: "CASCADE",
+          on_delete: "CASCADE",
+          on_update: "CASCADE",
           description: "Khóa ngoại liên kết với bảng enterprises",
         },
       ],
@@ -429,8 +429,8 @@ export const coreSchema: DatabaseSchema = {
             table: "stores",
             fields: ["id"],
           },
-          onDelete: "CASCADE",
-          onUpdate: "CASCADE",
+          on_delete: "CASCADE",
+          on_update: "CASCADE",
           description: "Khóa ngoại liên kết với bảng stores",
         },
       ],
@@ -549,8 +549,8 @@ export const coreSchema: DatabaseSchema = {
             table: "users",
             fields: ["_id"],
           },
-          onDelete: "CASCADE",
-          onUpdate: "CASCADE",
+          on_delete: "CASCADE",
+          on_update: "CASCADE",
           description: "Khóa ngoại liên kết với bảng users",
         },
         {
@@ -560,8 +560,8 @@ export const coreSchema: DatabaseSchema = {
             table: "stores",
             fields: ["id"],
           },
-          onDelete: "CASCADE",
-          onUpdate: "CASCADE",
+          on_delete: "CASCADE",
+          on_update: "CASCADE",
           description: "Khóa ngoại liên kết với bảng stores",
         },
       ],
@@ -684,8 +684,8 @@ export const coreSchema: DatabaseSchema = {
             table: "stores",
             fields: ["id"],
           },
-          onDelete: "CASCADE",
-          onUpdate: "CASCADE",
+          on_delete: "CASCADE",
+          on_update: "CASCADE",
           description: "Khóa ngoại liên kết với bảng stores",
         },
       ],
@@ -695,7 +695,7 @@ export const coreSchema: DatabaseSchema = {
 
 // Schema blog cho quản lý tin bài
 export const blogSchema: DatabaseSchema = {
-  version: "v1",
+  version: "1.0",
   database_type: "mongodb",
   database_name: "blog_content",
   description:
@@ -989,7 +989,7 @@ export const blogSchema: DatabaseSchema = {
             table: "articles",
             fields: ["_id"],
           },
-          onDelete: "CASCADE",
+          on_delete: "CASCADE",
           description:
             "Liên kết khóa ngoại với bảng articles, xóa bài viết thì xóa cả thống kê.",
         },
@@ -1070,7 +1070,7 @@ export const blogSchema: DatabaseSchema = {
             table: "articles",
             fields: ["_id"],
           },
-          onDelete: "CASCADE",
+          on_delete: "CASCADE",
           description:
             "Liên kết khóa ngoại với bảng articles, xóa bài viết thì xóa cả bình luận.",
         },
@@ -1136,7 +1136,7 @@ export const blogSchema: DatabaseSchema = {
             table: "articles",
             fields: ["_id"],
           },
-          onDelete: "CASCADE",
+          on_delete: "CASCADE",
           description:
             "Liên kết khóa ngoại với bảng articles, xóa bài viết thì xóa cả reactions.",
         },
