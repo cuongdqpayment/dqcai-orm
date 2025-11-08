@@ -57,7 +57,7 @@ export class MySQLAdapter extends BaseAdapter {
     if (!this.dbConfig) throw Error("No database configuration provided.");
     const config = {
       ...this.dbConfig,
-      database: schemaKey || this.dbConfig.database, // ưu tiên lấy database thuộc schemaConfig
+      database: schemaKey || this.dbConfig.database,
     } as MySQLConfig;
 
     logger.debug("Connecting to MySQL", {
@@ -68,17 +68,52 @@ export class MySQLAdapter extends BaseAdapter {
 
     try {
       logger.trace("Dynamically importing 'mysql2/promise' module");
-
       const mysql = await import("mysql2/promise");
 
-      logger.trace("Creating MySQL connection pool");
+      // ✅ STEP 1: Connect to default database to check/create target database
+      logger.trace("Checking if target database exists");
+      const checkPool = mysql.createPool({
+        ...config,
+        database: undefined, // ⚠️ Connect without specifying database
+      } as any);
 
+      try {
+        // Check if database exists
+        const [rows] = await checkPool.query(
+          "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?",
+          [config.database]
+        );
+
+        if ((rows as any[]).length === 0) {
+          // ✅ Database doesn't exist, create it
+          logger.info("Target database does not exist, creating it", {
+            database: config.database,
+          });
+
+          // ⚠️ Escape database name to prevent SQL injection
+          const safeDatabaseName = config.database?.replace(
+            /[^a-zA-Z0-9_]/g,
+            ""
+          );
+          await checkPool.query(`CREATE DATABASE \`${safeDatabaseName}\``);
+
+          logger.info("Database created successfully", {
+            database: config.database,
+          });
+        } else {
+          logger.trace("Target database already exists", {
+            database: config.database,
+          });
+        }
+      } finally {
+        await checkPool.end();
+      }
+
+      // ✅ STEP 2: Connect to target database
+      logger.trace("Creating MySQL connection pool for target database");
       const pool = mysql.createPool(config);
 
-      // trường hợp database chưa tạo thì phải tạo nó nhé (xem postgresql)
-
       logger.trace("Creating IConnection object");
-
       const connection: IConnection = {
         rawConnection: pool,
         isConnected: true,

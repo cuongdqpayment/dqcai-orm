@@ -52,10 +52,9 @@ export class MariaDBAdapter extends MySQLAdapter {
 
   async connect(schemaKey?: string): Promise<IConnection> {
     if (!this.dbConfig) throw Error("No database configuration provided.");
-
     const config = {
       ...this.dbConfig,
-      database: schemaKey || this.dbConfig.database, // ưu tiên lấy database thuộc schemaConfig
+      database: schemaKey || this.dbConfig.database,
     } as MariaDBConfig;
 
     logger.debug("Connecting to MariaDB", {
@@ -68,9 +67,48 @@ export class MariaDBAdapter extends MySQLAdapter {
       let pool;
       let usingMariaDBDriver = false;
 
+      // Try mariadb driver first
       try {
         logger.trace("Dynamically importing 'mariadb' module");
         const mariadb = await import("mariadb");
+
+        // ✅ STEP 1: Check/create database with mariadb driver
+        logger.trace("Checking if target database exists (mariadb driver)");
+        const checkPool = mariadb.createPool({
+          ...config,
+          database: undefined, // Connect without database
+        } as any);
+
+        try {
+          const rows = await checkPool.query(
+            "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?",
+            [config.database]
+          );
+
+          if ((rows as any[]).length === 0) {
+            logger.info("Target database does not exist, creating it", {
+              database: config.database,
+            });
+
+            const safeDatabaseName = config.database?.replace(
+              /[^a-zA-Z0-9_]/g,
+              ""
+            );
+            await checkPool.query(`CREATE DATABASE \`${safeDatabaseName}\``);
+
+            logger.info("Database created successfully", {
+              database: config.database,
+            });
+          } else {
+            logger.trace("Target database already exists", {
+              database: config.database,
+            });
+          }
+        } finally {
+          await checkPool.end();
+        }
+
+        // ✅ STEP 2: Connect to target database
         logger.trace("Creating MariaDB connection pool");
         pool = mariadb.createPool(config);
         usingMariaDBDriver = true;
@@ -78,13 +116,50 @@ export class MariaDBAdapter extends MySQLAdapter {
         logger.debug("MariaDB module not available, falling back to mysql2");
         logger.trace("Dynamically importing 'mysql2/promise' module");
         const mysql = await import("mysql2/promise");
+
+        // ✅ STEP 1: Check/create database with mysql2 driver
+        logger.trace("Checking if target database exists (mysql2 driver)");
+        const checkPool = mysql.createPool({
+          ...config,
+          database: undefined,
+        } as any);
+
+        try {
+          const [rows] = await checkPool.query(
+            "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?",
+            [config.database]
+          );
+
+          if ((rows as any[]).length === 0) {
+            logger.info("Target database does not exist, creating it", {
+              database: config.database,
+            });
+
+            const safeDatabaseName = config.database?.replace(
+              /[^a-zA-Z0-9_]/g,
+              ""
+            );
+            await checkPool.query(`CREATE DATABASE \`${safeDatabaseName}\``);
+
+            logger.info("Database created successfully", {
+              database: config.database,
+            });
+          } else {
+            logger.trace("Target database already exists", {
+              database: config.database,
+            });
+          }
+        } finally {
+          await checkPool.end();
+        }
+
+        // ✅ STEP 2: Connect to target database
         logger.trace("Creating MySQL2 connection pool as fallback");
         pool = mysql.createPool(config as any);
         usingMariaDBDriver = false;
       }
 
       logger.trace("Creating IConnection object");
-
       const connection: IConnection = {
         rawConnection: pool,
         isConnected: true,
@@ -97,8 +172,6 @@ export class MariaDBAdapter extends MySQLAdapter {
       this.pool = pool;
       this.connection = connection;
       this.config = config;
-
-      // ✅ Store which driver we're using
       (this as any)._usingMariaDBDriver = usingMariaDBDriver;
 
       logger.info("MariaDB connection established successfully", {

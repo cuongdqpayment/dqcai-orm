@@ -53,7 +53,7 @@ export class SQLServerAdapter extends BaseAdapter {
     if (!this.dbConfig) throw Error("No database configuration provided.");
     const config = {
       ...this.dbConfig,
-      database: schemaKey || this.dbConfig.database, // ưu tiên lấy database thuộc schemaConfig
+      database: schemaKey || this.dbConfig.database,
     } as SQLServerConfig;
 
     logger.debug("Connecting to SQL Server", {
@@ -64,15 +64,61 @@ export class SQLServerAdapter extends BaseAdapter {
 
     try {
       logger.trace("Dynamically importing 'mssql' module");
-
       const sql = await import("mssql");
 
-      logger.trace("Connecting to SQL Server pool");
+      // ✅ STEP 1: Connect to master database to check/create target database
+      logger.trace("Checking if target database exists");
+      const checkConfig = {
+        ...config,
+        database: "master", // ⚠️ Connect to master database
+      };
 
+      const checkPool = await sql.connect(checkConfig);
+
+      try {
+        // ✅ Create request first, then bind parameters
+        const checkRequest = checkPool.request();
+        checkRequest.input("dbName", sql.VarChar, config.database);
+
+        // Check if database exists
+        const result = await checkRequest.query(`
+        SELECT name FROM sys.databases WHERE name = @dbName
+      `);
+
+        if (result.recordset.length === 0) {
+          // ✅ Database doesn't exist, create it
+          logger.info("Target database does not exist, creating it", {
+            database: config.database,
+          });
+
+          // ⚠️ Escape database name to prevent SQL injection
+          const safeDatabaseName = config.database?.replace(
+            /[^a-zA-Z0-9_]/g,
+            ""
+          );
+
+          // Note: Cannot use parameters for CREATE DATABASE
+          await checkPool
+            .request()
+            .query(`CREATE DATABASE [${safeDatabaseName}]`);
+
+          logger.info("Database created successfully", {
+            database: config.database,
+          });
+        } else {
+          logger.trace("Target database already exists", {
+            database: config.database,
+          });
+        }
+      } finally {
+        await checkPool.close();
+      }
+
+      // ✅ STEP 2: Connect to target database
+      logger.trace("Connecting to SQL Server pool");
       const pool = await sql.connect(config);
 
       logger.trace("Creating IConnection object");
-
       const connection: IConnection = {
         rawConnection: pool,
         isConnected: true,

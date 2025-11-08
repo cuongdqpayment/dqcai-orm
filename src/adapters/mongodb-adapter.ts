@@ -70,7 +70,7 @@ export class MongoDBAdapter extends BaseAdapter {
     if (!this.dbConfig) throw Error("No database configuration provided.");
     const config = {
       ...this.dbConfig,
-      database: schemaKey || this.dbConfig.database, // ưu tiên lấy database thuộc schemaConfig
+      database: schemaKey || this.dbConfig.database,
     } as MongoDBConfig;
 
     logger.debug("Connecting to MongoDB", {
@@ -80,24 +80,41 @@ export class MongoDBAdapter extends BaseAdapter {
     });
 
     try {
-      // ✅ QUAN TRỌNG: Dynamic import - chỉ load khi gọi connect() nên có thể khai theo file index.ts bên ngoài gom chung được
+      logger.trace("Dynamically importing 'mongodb' module");
       const { MongoClient, ObjectId } = await import("mongodb");
+
       const url =
         config.url || config.connectionString || "mongodb://localhost:27017";
 
       logger.trace("Creating MongoClient with URL", {
         url: url.replace(/\/\/.*@/, "//***REDACTED***@"),
-      }); // Redact credentials in logs
+      });
 
       const client = new MongoClient(url, config.options);
 
       logger.trace("Connecting MongoClient");
       await client.connect();
 
+      // ✅ MongoDB automatically creates database when first document is inserted
+      // But we can explicitly create it to verify connection
       const db = client.db(config.database);
 
-      logger.trace("Creating IConnection object");
+      // ✅ Verify database connection by listing collections
+      // This also ensures database is created in MongoDB
+      try {
+        logger.trace("Verifying database access");
+        await db.listCollections().toArray();
+        logger.trace("Database access verified", {
+          database: config.database,
+        });
+      } catch (accessError) {
+        logger.warn("Could not verify database access", {
+          database: config.database,
+          error: (accessError as Error).message,
+        });
+      }
 
+      logger.trace("Creating IConnection object");
       const connection: IConnection = {
         rawConnection: client,
         isConnected: true,

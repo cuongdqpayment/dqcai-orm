@@ -59,7 +59,7 @@ export class OracleAdapter extends BaseAdapter {
     if (!this.dbConfig) throw Error("No database configuration provided.");
     const config = {
       ...this.dbConfig,
-      database: schemaKey || this.dbConfig.database, // ưu tiên lấy database thuộc schemaConfig
+      database: schemaKey || this.dbConfig.database,
     } as OracleConfig;
 
     logger.debug("Connecting to Oracle", {
@@ -70,16 +70,18 @@ export class OracleAdapter extends BaseAdapter {
 
     try {
       logger.trace("Dynamically importing 'oracledb' module");
-
       const oracledb = await import("oracledb");
 
       logger.trace("Configuring oracledb settings");
-
       oracledb.outFormat = oracledb.OUT_FORMAT_OBJECT;
       oracledb.fetchAsString = [oracledb.CLOB];
       oracledb.fetchAsBuffer = [oracledb.BLOB];
 
       const connectString = this.buildConnectString(config);
+
+      // ✅ Oracle approach: Check/create SCHEMA (user)
+      // Note: Oracle schemas are typically created by DBAs
+      // We'll attempt to create tablespace if user has privileges
 
       logger.trace("Creating Oracle connection pool", {
         connectStringSnippet:
@@ -100,8 +102,60 @@ export class OracleAdapter extends BaseAdapter {
         privilege: config.privilege,
       });
 
-      logger.trace("Creating IConnection object");
+      // ✅ Optional: Try to create schema if using system/admin privileges
+      if (schemaKey && config.privilege === oracledb.SYSDBA) {
+        try {
+          const conn = await pool.getConnection();
+          try {
+            // Check if user/schema exists
+            const result = await conn.execute(
+              `SELECT username FROM all_users WHERE username = UPPER(:1)`,
+              [schemaKey]
+            );
 
+            if (result.rows && result.rows.length === 0) {
+              logger.info(
+                "Target schema does not exist, attempting to create",
+                {
+                  schema: schemaKey,
+                }
+              );
+
+              // Create user/schema with basic privileges
+              const safeSchemaName = schemaKey.replace(/[^a-zA-Z0-9_]/g, "");
+              await conn.execute(
+                `CREATE USER ${safeSchemaName} IDENTIFIED BY ${safeSchemaName}_pwd`
+              );
+              await conn.execute(
+                `GRANT CONNECT, RESOURCE TO ${safeSchemaName}`
+              );
+              await conn.execute(
+                `GRANT UNLIMITED TABLESPACE TO ${safeSchemaName}`
+              );
+
+              logger.info("Schema created successfully", {
+                schema: schemaKey,
+              });
+            } else {
+              logger.trace("Target schema already exists", {
+                schema: schemaKey,
+              });
+            }
+          } finally {
+            await conn.close();
+          }
+        } catch (schemaError) {
+          logger.warn(
+            "Could not auto-create schema (requires DBA privileges)",
+            {
+              schema: schemaKey,
+              error: (schemaError as Error).message,
+            }
+          );
+        }
+      }
+
+      logger.trace("Creating IConnection object");
       const connection: IConnection = {
         rawConnection: pool,
         isConnected: true,
