@@ -162,7 +162,7 @@ export class DatabaseManager {
 
       options = {
         ...options,
-        adapter: existingAdapter
+        adapter: existingAdapter,
       };
     } else {
       logger.debug("No registered adapter found, will create new one", {
@@ -247,17 +247,17 @@ export class DatabaseManager {
   // ==================== ENHANCED INITIALIZATION WITH VERSION CONTROL ====================
 
   /**
-   * Phương thức tạo schema mới 
+   * Phương thức tạo schema mới
    * thực hiện kết nối csdl, tạo database hoặc file trong sqlite theo schema.database
-   * yêu cầu đưa tuỳ chọn là 
-   *  options = { dbConfig, validateVersion: true } 
+   * yêu cầu đưa tuỳ chọn là
+   *  options = { dbConfig, validateVersion: true }
    * để kiểm tra version và tạo mới các bảng theo định nghĩa tự động
    * Và cấu hình kết nối csdl dbConfig để tự động lựa chọn Adapter phù hợp
-   * 
-   * @param schemaKey 
-   * @param options 
-   * @returns 
-   */ 
+   *
+   * @param schemaKey
+   * @param options
+   * @returns
+   */
   public static async initializeSchema(
     schemaKey: string,
     options?: Partial<DbFactoryOptions>
@@ -274,7 +274,7 @@ export class DatabaseManager {
     }
 
     // 2. Tạo DAO (KHÔNG auto-initialize tables)
-    // trong lúc tạo DAO sẽ tự động kết nối csdl 
+    // trong lúc tạo DAO sẽ tự động kết nối csdl
     const dao = await this.getDAO(schemaKey, {
       ...options,
       autoInitializeTables: false,
@@ -483,7 +483,7 @@ export class DatabaseManager {
    * ✅ NEW: Initialize tất cả schemas với version control
    */
   public static async initializeAll(
-    options?: InitializeOptions
+    options?: Partial<DbFactoryOptions>
   ): Promise<void> {
     logger.info("Initializing all schemas with version control");
 

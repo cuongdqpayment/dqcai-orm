@@ -105,7 +105,6 @@ const core: DatabaseSchema = {
   database_name: "core",
   description:
     "Cơ sở dữ liệu hệ thống cốt lõi quản lý toàn bộ hoạt động của doanh nghiệp",
-  type_mapping: SQLITE_TYPE_MAPPING,
   schemas: {
     enterprises: {
       description: "Bảng quản lý thông tin các doanh nghiệp trong hệ thống",

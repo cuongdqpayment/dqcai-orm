@@ -11,6 +11,9 @@ import {
 } from "../src/index";
 
 import { core as coreSchema } from "./coreSchema";
+
+import { schemas } from "./posSchemas";
+
 const dbConfig: SQLiteConfig = {
   databaseType: "sqlite",
   database: "core",
@@ -110,10 +113,9 @@ async function verifyForeignKeys() {
 // ========== Main Function ==========
 async function main() {
   try {
-
-    logger.debug("📋 1.Registering Schemas...");
+    logger.debug("📋 1.Registering CORE Schema...");
     DatabaseManager.registerSchema("core", coreSchema);
-    
+
     try {
       logger.debug("🔧 2.Initializing database with validateVersion=true...\n");
       // đặt option validateVersion=true để tạo bảng dữ liệu cho shema tương ứng version
@@ -121,7 +123,20 @@ async function main() {
         dbConfig, // cấu hình csdl có trường database_type sẽ cho biết dùng adapter nào
         validateVersion: true, // tạo bảng nếu version mới, hoặc mới khởi động chương trinhg
       });
-      console.log("✅ Schema initialized");
+      console.log("✅ Schema core initialized");
+
+      logger.debug("📋 3.Registering Multi Schemas...");
+      DatabaseManager.registerSchemas(schemas);
+
+      logger.debug(
+        "🔧 4.Initializing all database with validateVersion=true...\n"
+      );
+      // đặt option validateVersion=true để tạo bảng dữ liệu cho shema tương ứng version
+      await DatabaseManager.initializeAll({
+        dbConfig, // cấu hình csdl có trường database_type sẽ cho biết dùng adapter nào
+        validateVersion: true, // tạo bảng nếu version mới, hoặc mới khởi động chương trinhg
+      });
+      console.log("✅ Schema allDatabase initialized");
     } catch (error) {
       console.error("❌ Failed to initialize schema:", error);
       throw error;

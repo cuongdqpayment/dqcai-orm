@@ -1,5 +1,5 @@
 // ========================
-// src/core/database-factory.ts (OPTIMIZED VERSION)
+// src/core/database-factory.ts
 // ========================
 
 import { DatabaseType, DbConfig, DatabaseSchema } from "@/types/orm.types";
@@ -566,7 +566,9 @@ export class DatabaseFactory {
     const visit = (entityName: string) => {
       if (visited.has(entityName)) return;
       if (visiting.has(entityName)) {
-        logger.warn("Circular dependency detected", { entityName });
+        // tham chiếu foreign_keys cho chính bảng của nó 
+        // trường hợp này dùng để quản lý cấu trúc cây trong cùng bảng
+        logger.info("Circular dependency detected", { entityName });
         return;
       }
 
