@@ -5,6 +5,7 @@
 import { BaseAdapter } from "@/core/base-adapter";
 import {
   DatabaseType,
+  DbConfig,
   EntitySchemaDefinition,
   ForeignKeyDefinition,
   ForeignKeyInfo,
@@ -21,16 +22,15 @@ export class SQLServerAdapter extends BaseAdapter {
   type: DatabaseType = "sqlserver";
   databaseType: DatabaseType = "sqlserver";
   private pool: any = null;
-  constructor(config: SQLServerConfig) {
+  constructor(config: DbConfig) {
     super(config);
   }
 
-
-  /*
-  Chuyển 2 hàm isSupported và connect về luôn Adapter, không cần tạo connection nữa
-  */
   isSupported(): boolean {
-    // Nếu đã connect → supported
+    if (this.dbModule !== null) {
+      return true;
+    }
+
     if (this.pool || this.isConnected()) {
       return true;
     }
@@ -38,7 +38,7 @@ export class SQLServerAdapter extends BaseAdapter {
     logger.trace("Checking SQL Server support");
 
     try {
-      require.resolve("mssql");
+      this.dbModule = this.require("mssql");
       logger.debug("SQL Server module 'mssql' is supported");
 
       return true;
@@ -51,7 +51,10 @@ export class SQLServerAdapter extends BaseAdapter {
 
   async connect(schemaKey?: string): Promise<IConnection> {
     if (!this.dbConfig) throw Error("No database configuration provided.");
-    const config = this.dbConfig as SQLServerConfig;
+    const config = {
+      ...this.dbConfig,
+      database: schemaKey || this.dbConfig.database, // ưu tiên lấy database thuộc schemaConfig
+    } as SQLServerConfig;
 
     logger.debug("Connecting to SQL Server", {
       database: config.database,

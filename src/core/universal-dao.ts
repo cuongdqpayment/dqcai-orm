@@ -30,35 +30,99 @@ export class UniversalDAO<TConnection extends IConnection = IConnection>
   protected adapter: IAdapter<TConnection>;
   protected connection: TConnection | null = null;
   public readonly schema: DatabaseSchema;
+  public readonly databaseName: string;
   public readonly databaseType: DatabaseType;
-  public readonly dbConfig: DbConfig;
-  protected schemaKey?: string;
+  private isConnected: boolean = false;
 
   // Reconnection tracking
   private reconnectAttempts: number = 0;
   private maxReconnectAttempts: number = 3;
   private reconnectDelay: number = 1000;
 
-  constructor(
-    adapter: IAdapter<TConnection>,
-    schema: DatabaseSchema,
-    dbConfig: DbConfig,
-    schemaKey?: string
-  ) {
-    logger.debug("Creating UniversalDAO instance", {
-      databaseName: schema.database_name,
-      databaseType: schema.database_type,
-    });
-
+  /**
+   * Khởi tạo đối tượng DAO cần thiết cung cấp các thông tin sau
+   * @param adapter - Bộ adapter tương thích với csdl đang kết nối
+   * @param schema  - Định nghĩa một Schema đơn lẻ chứa các bảng của nó Đối với SQLITE thì tương đương một file.
+   *                  còn đối với các loại db còn lại thì nó là một database, hoặc owner(oracle)
+   */
+  constructor(adapter: IAdapter<TConnection>, schema: DatabaseSchema) {
     this.adapter = adapter;
     this.databaseType = adapter.databaseType;
+    this.databaseName = schema.database_name;
     this.schema = schema;
-    this.dbConfig = dbConfig;
-    this.schemaKey = schemaKey;
+
+    logger.debug("Creating UniversalDAO instance", {
+      databaseName: this.databaseName,
+      databaseType: this.databaseType,
+    });
   }
 
-  // ==================== CONNECTION MANAGEMENT ====================
+  // ========================== CONNECTION MANAGEMENT ==========================
+  async connect(): Promise<void> {
+    logger.debug("Attempting to connect to database", {
+      databaseName: this.databaseName,
+    });
+    if (this.isConnected && this.connection) {
+      logger.debug("Connection already established, skipping", {
+        databaseName: this.databaseName,
+      });
+      return;
+    }
 
+    try {
+      // thực thi việc kết nối với csdl theo config được lập trong adapter
+      // và tạo mới hoặc chuyển sang databaseName đúng trong cấu trúc
+      this.connection = await this.adapter.connect(this.databaseName);
+      this.isConnected = true;
+      logger.info("Database connection established", {
+        databaseName: this.databaseName,
+      });
+    } catch (error) {
+      logger.error("Failed to connect to database", {
+        databaseName: this.databaseName,
+        error: (error as Error).message,
+      });
+      throw error;
+    }
+  }
+
+  async disconnect(): Promise<void> {
+    logger.debug("Attempting to disconnect from database", {
+      databaseName: this.databaseName,
+    });
+    try {
+      if (this.connection) {
+        await this.adapter.disconnect();
+        this.connection = null;
+        this.isConnected = false;
+        logger.info("Database connection closed", {
+          databaseName: this.databaseName,
+        });
+      } else {
+        logger.debug("No connection to close", {
+          databaseName: this.databaseName,
+        });
+      }
+    } catch (error) {
+      logger.error("Error disconnecting from database", {
+        databaseName: this.databaseName,
+        error: (error as Error).message,
+      });
+      throw error;
+    }
+  }
+
+  isConnectionOpen(): boolean {
+    logger.trace("Checking connection status", {
+      databaseName: this.databaseName,
+    });
+    return this.isConnected && !!this.connection;
+  }
+
+  /**
+   * Bảo đảm kết nối trước khi thực thi
+   * @returns
+   */
   async ensureConnected(): Promise<TConnection> {
     logger.debug("Ensuring connection", {
       databaseName: this.schema.database_name,
@@ -66,6 +130,7 @@ export class UniversalDAO<TConnection extends IConnection = IConnection>
       adapterConnected: this.adapter.isConnected(),
     });
 
+    // vì lý do gì đó mà adapter đóng connection làm cho this.connection bị lỗi thì kiểm tra chái này
     const existingConnection = this.adapter.getConnection();
     if (existingConnection && existingConnection.isConnected) {
       logger.info("Adapter already has active connection, reusing it", {
@@ -91,7 +156,7 @@ export class UniversalDAO<TConnection extends IConnection = IConnection>
       let lastError: Error | null = null;
       for (let attempt = 0; attempt < this.maxReconnectAttempts; attempt++) {
         try {
-          this.connection = await this.adapter.connect(this.schemaKey);
+          this.connection = await this.adapter.connect(this.databaseName);
           this.reconnectAttempts = 0;
           logger.info("Connected successfully");
           return this.connection;
@@ -120,10 +185,32 @@ export class UniversalDAO<TConnection extends IConnection = IConnection>
     return this.connection;
   }
 
+  /**
+   *
+   * @param error
+   * @returns
+   */
+  private isConnectionError(error: any): boolean {
+    const connectionErrorMessages = [
+      "connection",
+      "timeout",
+      "ECONNREFUSED",
+      "ENOTFOUND",
+      "ETIMEDOUT",
+      "socket",
+      "closed",
+      "lost",
+    ];
+
+    const errorMessage = error?.message?.toLowerCase() || "";
+    return connectionErrorMessages.some((msg) => errorMessage.includes(msg));
+  }
+
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  // ==================== DLL====================
   async execute(query: string | any, params?: any[]): Promise<IResult> {
     logger.trace("Executing query");
 
@@ -139,22 +226,6 @@ export class UniversalDAO<TConnection extends IConnection = IConnection>
       }
       throw error;
     }
-  }
-
-  private isConnectionError(error: any): boolean {
-    const connectionErrorMessages = [
-      "connection",
-      "timeout",
-      "ECONNREFUSED",
-      "ENOTFOUND",
-      "ETIMEDOUT",
-      "socket",
-      "closed",
-      "lost",
-    ];
-
-    const errorMessage = error?.message?.toLowerCase() || "";
-    return connectionErrorMessages.some((msg) => errorMessage.includes(msg));
   }
 
   // ==================== BASIC CRUD OPERATIONS ====================
@@ -380,7 +451,7 @@ export class UniversalDAO<TConnection extends IConnection = IConnection>
       }
     }
 
-    // ✅ 1. Tạo table với columns + foreign_keys include 
+    // ✅ 1. Tạo table với columns + foreign_keys include
     await this.adapter.createTable(entityName, schemaDefinition, foreignKeys);
     logger.info("Table structure created", { entityName });
 
@@ -404,7 +475,7 @@ export class UniversalDAO<TConnection extends IConnection = IConnection>
         }
       }
     }
-    
+
     logger.info("Table created with full schema", {
       entityName,
       indexCount: indexes.length,

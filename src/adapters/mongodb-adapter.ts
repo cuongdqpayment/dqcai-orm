@@ -5,6 +5,7 @@
 import { BaseAdapter } from "@/core/base-adapter";
 import {
   DatabaseType,
+  DbConfig,
   EntitySchemaDefinition,
   ForeignKeyDefinition,
   ForeignKeyInfo,
@@ -35,14 +36,18 @@ export class MongoDBAdapter extends BaseAdapter {
   private db: any = null;
   private ObjectId: any = null;
 
-  constructor(config: MongoDBConfig) {
+  constructor(config: DbConfig) {
     super(config);
   }
 
-  /*
-  Chuyển 2 hàm isSupported và connect về luôn Adapter, không cần tạo connection nữa
-  */
+  /**
+   *
+   * @returns
+   */
   isSupported(): boolean {
+    if (this.dbModule !== null) {
+      return true;
+    }
     // Nếu đã connect → supported
     if (this.db || this.isConnected()) {
       return true;
@@ -51,9 +56,8 @@ export class MongoDBAdapter extends BaseAdapter {
     logger.trace("Checking MongoDB support");
 
     try {
-      require.resolve("mongodb"); // ✅ Chỉ check, không import
+      this.dbModule = this.require("mongodb");
       logger.debug("MongoDB module is supported");
-
       return true;
     } catch {
       logger.debug("MongoDB module is not supported");
@@ -64,7 +68,10 @@ export class MongoDBAdapter extends BaseAdapter {
 
   async connect(schemaKey?: string): Promise<IConnection> {
     if (!this.dbConfig) throw Error("No database configuration provided.");
-    const config = this.dbConfig as MongoDBConfig;
+    const config = {
+      ...this.dbConfig,
+      database: schemaKey || this.dbConfig.database, // ưu tiên lấy database thuộc schemaConfig
+    } as MongoDBConfig;
 
     logger.debug("Connecting to MongoDB", {
       database: config.database,

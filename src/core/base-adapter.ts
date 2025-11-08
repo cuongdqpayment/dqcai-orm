@@ -1,6 +1,7 @@
 // ========================
-// src/core/base-adapter.ts (FIXED)
+// src/core/base-adapter.ts
 // ========================
+import { createRequire } from "module";
 import { IAdapter } from "../interfaces/adapter.interface";
 import {
   BulkOperation,
@@ -24,9 +25,13 @@ import { createModuleLogger, ORMModules } from "../logger";
 const logger = createModuleLogger(ORMModules.BASE_ADAPTER);
 
 export abstract class BaseAdapter implements IAdapter {
+  protected dbModule: any = null;
+  protected require: NodeRequire;
+
   protected dbConfig: DbConfig;
   constructor(config: DbConfig) {
     this.dbConfig = config;
+    this.require = createRequire(import.meta.url);
   }
 
   createForeignKey(

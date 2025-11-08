@@ -5,6 +5,7 @@
 import { BaseAdapter } from "@/core/base-adapter";
 import {
   DatabaseType,
+  DbConfig,
   EntitySchemaDefinition,
   FieldDefinition,
   ForeignKeyDefinition,
@@ -24,7 +25,7 @@ export class OracleAdapter extends BaseAdapter {
   private oracledb: any = null;
   private pool: any = null;
 
-  constructor(config: OracleConfig) {
+  constructor(config: DbConfig) {
     super(config);
   }
 
@@ -32,7 +33,10 @@ export class OracleAdapter extends BaseAdapter {
   Chuyển 2 hàm isSupported và connect về luôn Adapter, không cần tạo connection nữa
   */
   isSupported(): boolean {
-    // Nếu đã connect → supported
+    if (this.dbModule !== null) {
+      return true;
+    }
+
     if (this.pool || this.isConnected()) {
       return true;
     }
@@ -40,7 +44,7 @@ export class OracleAdapter extends BaseAdapter {
     logger.trace("Checking Oracle support");
 
     try {
-      require.resolve("oracledb");
+      this.dbModule = this.require("oracledb");
       logger.debug("Oracle module 'oracledb' is supported");
 
       return true;
@@ -53,7 +57,10 @@ export class OracleAdapter extends BaseAdapter {
 
   async connect(schemaKey?: string): Promise<IConnection> {
     if (!this.dbConfig) throw Error("No database configuration provided.");
-    const config = this.dbConfig as OracleConfig;
+    const config = {
+      ...this.dbConfig,
+      database: schemaKey || this.dbConfig.database, // ưu tiên lấy database thuộc schemaConfig
+    } as OracleConfig;
 
     logger.debug("Connecting to Oracle", {
       database: config.database,

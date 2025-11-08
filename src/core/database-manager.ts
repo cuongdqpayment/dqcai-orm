@@ -86,20 +86,22 @@ export class DatabaseManager {
    * @param schemaKey
    * @param adapter
    */
-  public static async registerAdapterInstance(
+  public static registerAdapterInstance(
     schemaKey: string,
     adapter: IAdapter<any>
-  ): Promise<void> {
+  ): void {
     logger.debug("Registering adapter instance via DatabaseManager", {
       schemaKey,
       isConnected: adapter.isConnected(),
     });
 
-    if (!adapter.isConnected()) {
-      logger.debug("Adapter not connected, will auto-connect", { schemaKey });
-      await adapter.connect(schemaKey);
-      logger.debug("✓ Database connected");
-    }
+    // phương thức kết nối thực hiện trong factory lúc khởi tạo schema
+    // các lệnh init trước khi sử dụng phải connect
+    // if (!adapter.isConnected()) {
+    //   logger.debug("Adapter not connected, will auto-connect", { schemaKey });
+    //   await adapter.connect(schemaKey);
+    //   logger.debug("✓ Database connected");
+    // }
 
     DatabaseFactory.registerAdapterInstance(schemaKey, adapter);
     const existingDAO = this.daoCache.get(schemaKey);
@@ -160,8 +162,7 @@ export class DatabaseManager {
 
       options = {
         ...options,
-        adapter: existingAdapter,
-        autoConnect: false,
+        adapter: existingAdapter
       };
     } else {
       logger.debug("No registered adapter found, will create new one", {
@@ -246,11 +247,20 @@ export class DatabaseManager {
   // ==================== ENHANCED INITIALIZATION WITH VERSION CONTROL ====================
 
   /**
-   * ✅ NEW: Initialize schema với version control
-   */
+   * Phương thức tạo schema mới 
+   * thực hiện kết nối csdl, tạo database hoặc file trong sqlite theo schema.database
+   * yêu cầu đưa tuỳ chọn là 
+   *  options = { dbConfig, validateVersion: true } 
+   * để kiểm tra version và tạo mới các bảng theo định nghĩa tự động
+   * Và cấu hình kết nối csdl dbConfig để tự động lựa chọn Adapter phù hợp
+   * 
+   * @param schemaKey 
+   * @param options 
+   * @returns 
+   */ 
   public static async initializeSchema(
     schemaKey: string,
-    options?: InitializeOptions
+    options?: Partial<DbFactoryOptions>
   ): Promise<UniversalDAO<any>> {
     logger.info("Initializing schema with version control", {
       schemaKey,
@@ -264,7 +274,9 @@ export class DatabaseManager {
     }
 
     // 2. Tạo DAO (KHÔNG auto-initialize tables)
+    // trong lúc tạo DAO sẽ tự động kết nối csdl 
     const dao = await this.getDAO(schemaKey, {
+      ...options,
       autoInitializeTables: false,
       autoConnect: true,
     });

@@ -1,14 +1,16 @@
 // ========================
-// src/core/database-factory.ts (ENHANCED ADAPTER MANAGEMENT)
+// src/core/database-factory.ts (OPTIMIZED VERSION)
 // ========================
 
 import { DatabaseType, DbConfig, DatabaseSchema } from "@/types/orm.types";
 import { UniversalDAO } from "./universal-dao";
+import { AdapterHelper } from "@/helpers/adapter-helper";
 import { IAdapter } from "@/interfaces/adapter.interface";
 import { DbFactoryOptions } from "@/types/service.types";
 import { IConnection } from "@/types/orm.types";
 
 import { createModuleLogger, ORMModules } from "@/logger";
+
 const logger = createModuleLogger(ORMModules.DATABASE_FACTORY);
 
 /**
@@ -30,133 +32,87 @@ const AdapterRegistry = new Map<
 const AdapterInstanceRegistry = new Map<string, IAdapter<any>>();
 
 /**
- * ✅ NEW: Theo dõi các schema đang trong quá trình khởi tạo tables
+ * Theo dõi các schema đang trong quá trình khởi tạo tables
  */
 const InitializingSchemas = new Set<string>();
 
 /**
- * Database Factory (ENHANCED FOR ADAPTER SHARING)
+ * Database Factory (OPTIMIZED)
  */
 export class DatabaseFactory {
   // ==================== SCHEMA MANAGEMENT ====================
 
-  /**
-   * Đăng ký schema structure
-   */
   public static registerSchema(
     schemaKey: string,
     schema: DatabaseSchema
   ): void {
     logger.trace("Registering schema", { schemaKey });
-
     SchemaRegistry.set(schemaKey, schema);
-
     logger.debug("Schema registered successfully", { schemaKey });
   }
 
-  /**
-   * Đăng ký nhiều schemas
-   */
   public static registerSchemas(schemas: Record<string, DatabaseSchema>): void {
     logger.trace("Registering multiple schemas", {
       schemaCount: Object.keys(schemas).length,
     });
-
     Object.entries(schemas).forEach(([key, schema]) => {
       this.registerSchema(key, schema);
     });
-
     logger.debug("Multiple schemas registered successfully", {
       schemaCount: Object.keys(schemas).length,
     });
   }
 
-  /**
-   * Lấy schema đã đăng ký
-   */
   public static getSchema(schemaKey: string): DatabaseSchema | undefined {
     logger.trace("Getting schema", { schemaKey });
-
     return SchemaRegistry.get(schemaKey);
   }
 
-  /**
-   * Kiểm tra schema đã được đăng ký chưa
-   */
   public static hasSchema(schemaKey: string): boolean {
     logger.trace("Checking schema existence", { schemaKey });
-
     return SchemaRegistry.has(schemaKey);
   }
 
-  /**
-   * Lấy tất cả schemas đã đăng ký
-   */
   public static getAllSchemas(): Map<string, DatabaseSchema> {
     logger.trace("Getting all schemas", { totalSchemas: SchemaRegistry.size });
-
     return new Map(SchemaRegistry);
   }
 
-  /**
-   * Xóa schema đã đăng ký
-   */
   public static unregisterSchema(schemaKey: string): boolean {
     logger.trace("Unregistering schema", { schemaKey });
-
     const result = SchemaRegistry.delete(schemaKey);
-
     logger.debug("Schema unregistered", { schemaKey, success: result });
-
     return result;
   }
 
   // ==================== ADAPTER CLASS MANAGEMENT ====================
 
-  /**
-   * Đăng ký adapter class cho database type
-   */
   public static registerAdapter<TConnection extends IConnection>(
     type: DatabaseType,
     AdapterClass: { new (config?: any): IAdapter<TConnection> }
   ): void {
     logger.trace("Registering adapter class", { type });
-
     AdapterRegistry.set(
       type,
       AdapterClass as { new (config?: any): IAdapter<any> }
     );
-
     logger.debug("Adapter class registered successfully", { type });
   }
 
-  /**
-   * Lấy adapter class đã đăng ký
-   */
   public static getAdapterClass(
     type: DatabaseType
   ): { new (config?: any): IAdapter<any> } | undefined {
     logger.trace("Getting adapter class", { type });
-
     return AdapterRegistry.get(type);
   }
 
-  /**
-   * Kiểm tra adapter class đã được đăng ký chưa
-   */
   public static hasAdapterClass(type: DatabaseType): boolean {
     logger.trace("Checking adapter class existence", { type });
-
     return AdapterRegistry.has(type);
   }
 
-  // ==================== ADAPTER INSTANCE MANAGEMENT (ENHANCED) ====================
+  // ==================== ADAPTER INSTANCE MANAGEMENT ====================
 
-  /**
-   * ✅ ENHANCED: Đăng ký adapter instance đã được tạo sẵn
-   * @param schemaKey - Key của schema
-   * @param adapter - Instance của adapter
-   */
   public static registerAdapterInstance(
     schemaKey: string,
     adapter: IAdapter<any>
@@ -166,194 +122,199 @@ export class DatabaseFactory {
       isConnected: adapter.isConnected(),
       isSupported: adapter.isSupported(),
     });
-
     AdapterInstanceRegistry.set(schemaKey, adapter);
-
     logger.debug("Adapter instance registered successfully", { schemaKey });
   }
 
-  /**
-   * Lấy adapter instance đã đăng ký
-   */
   public static getAdapterInstance(
     schemaKey: string
   ): IAdapter<any> | undefined {
     logger.trace("Getting adapter instance", { schemaKey });
-
     const adapter = AdapterInstanceRegistry.get(schemaKey);
-
     if (adapter) {
       logger.debug("Found adapter instance", {
         schemaKey,
         isConnected: adapter.isConnected(),
       });
-    } else {
-      logger.trace("No adapter instance found", { schemaKey });
     }
-
     return adapter;
   }
 
-  /**
-   * ✅ NEW: Kiểm tra có adapter instance không
-   */
   public static hasAdapterInstance(schemaKey: string): boolean {
     logger.trace("Checking adapter instance existence", { schemaKey });
-
     return AdapterInstanceRegistry.has(schemaKey);
   }
 
-  /**
-   * Xóa adapter instance
-   */
   public static async unregisterAdapterInstance(
     schemaKey: string
   ): Promise<boolean> {
     logger.trace("Unregistering adapter instance", { schemaKey });
-
     const adapter = AdapterInstanceRegistry.get(schemaKey);
-    if (adapter) {
-      logger.debug("Disconnecting adapter before unregister", { schemaKey });
 
-      try {
-        if (adapter.isConnected()) {
-          await adapter.disconnect();
-        }
-      } catch (error) {
-        logger.warn("Error disconnecting adapter", {
-          schemaKey,
-          error: (error as Error).message,
-        });
-      }
-
-      const result = AdapterInstanceRegistry.delete(schemaKey);
-
-      logger.debug("Adapter instance unregistered", {
-        schemaKey,
-        success: result,
-      });
-
-      return result;
+    if (!adapter) {
+      logger.debug("No adapter instance found to unregister", { schemaKey });
+      return false;
     }
 
-    logger.debug("No adapter instance found to unregister", { schemaKey });
+    try {
+      if (adapter.isConnected()) {
+        logger.debug("Disconnecting adapter before unregister", { schemaKey });
+        await adapter.disconnect();
+      }
+    } catch (error) {
+      logger.warn("Error disconnecting adapter", {
+        schemaKey,
+        error: (error as Error).message,
+      });
+    }
 
-    return false;
+    const result = AdapterInstanceRegistry.delete(schemaKey);
+    logger.debug("Adapter instance unregistered", {
+      schemaKey,
+      success: result,
+    });
+    return result;
   }
 
-  // ==================== DAO CREATION (ENHANCED) ====================
+  // ==================== PRIVATE HELPER METHODS ====================
 
   /**
-   * ✅ ENHANCED: Tạo adapter instance từ schema key hoặc config
-   * Ưu tiên sử dụng adapter đã được register
+   * 🆕 HELPER: Tạo adapter instance từ AdapterClass và config
+   */
+  private static createAdapterFromClass(
+    AdapterClass: { new (config?: any): IAdapter<any> },
+    config?: DbConfig
+  ): IAdapter<any> {
+    logger.debug("Creating adapter from class", {
+      databaseType: config?.databaseType,
+    });
+    return new AdapterClass(config);
+  }
+
+  /**
+   * 🆕 HELPER: Đảm bảo adapter class được đăng ký (với lazy loading)
+   */
+  private static async ensureAdapterClassRegistered(
+    databaseType: DatabaseType
+  ): Promise<{ new (config?: any): IAdapter<any> }> {
+    logger.debug("Ensuring adapter class is registered", { databaseType });
+
+    // Kiểm tra trong AdapterRegistry trước
+    let AdapterClass = AdapterRegistry.get(databaseType);
+
+    if (AdapterClass) {
+      logger.debug("Adapter class found in local registry", { databaseType });
+      return AdapterClass;
+    }
+
+    // Lazy load từ AdapterHelper
+    logger.debug("Lazy loading adapter class from helper", { databaseType });
+    await AdapterHelper.lazyRegister(databaseType);
+
+    // Thử lấy từ Helper
+    AdapterClass = AdapterHelper.getAdapterClass(databaseType);
+
+    if (!AdapterClass) {
+      logger.error("Adapter class not found after lazy loading", {
+        databaseType,
+      });
+      throw new Error(
+        `Failed to load adapter class for database type '${databaseType}'. ` +
+          `Please ensure the adapter is properly configured.`
+      );
+    }
+
+    // Đăng ký vào local registry để tái sử dụng
+    this.registerAdapter(databaseType, AdapterClass);
+    logger.debug("Adapter class registered to local registry", {
+      databaseType,
+    });
+
+    return AdapterClass;
+  }
+
+ 
+  /**
+   * Tạo một adapter new Adapter(dbConfig);
+   * @param schemaKey 
+   * @param dbConfig 
+   * @returns 
    */
   private static async createAdapterInstance(
-    schema: DatabaseSchema,
     schemaKey: string,
-    dbConfig?: DbConfig,
-    injectedAdapter?: IAdapter<any>
+    dbConfig?: DbConfig
   ): Promise<IAdapter<any>> {
     logger.debug("Creating/getting adapter instance", {
       schemaKey,
-      databaseType: schema.database_type,
-      databaseName: schema.database_name,
-      hasInjectedAdapter: !!injectedAdapter,
       hasRegisteredAdapter: AdapterInstanceRegistry.has(schemaKey),
+      hasDatabaseType: !!dbConfig?.databaseType,
     });
 
-    // 1. ✅ PRIORITY 1: Nếu có adapter được inject sẵn
-    if (injectedAdapter) {
-      logger.info("Using injected adapter instance", {
-        schemaKey,
-        databaseType: schema.database_type,
-      });
-      return injectedAdapter;
-    }
-
-    // 2. ✅ PRIORITY 2: Kiểm tra adapter đã được register chưa
+    // 1. Kiểm tra adapter đã được đăng ký chưa
     const registeredAdapter = AdapterInstanceRegistry.get(schemaKey);
     if (registeredAdapter) {
-      logger.info("Using registered adapter instance", {
+      logger.info("Reusing registered adapter instance", {
         schemaKey,
-        databaseType: schema.database_type,
+        databaseType: registeredAdapter.databaseType,
         isConnected: registeredAdapter.isConnected(),
       });
       return registeredAdapter;
     }
 
-    // 3. ✅ PRIORITY 3: Tạo adapter mới
-    logger.debug("No existing adapter, creating new one", {
-      schemaKey,
-      databaseType: schema.database_type,
-    });
-
-    // Lấy adapter class từ registry
-    const AdapterClass = AdapterRegistry.get(schema.database_type || "sqlite");
-    if (!AdapterClass) {
-      logger.error("Adapter class not found for database type", {
-        databaseType: schema.database_type,
-        schemaName: schema.database_name,
+    // 2. Cần tạo adapter mới - yêu cầu databaseType
+    if (!dbConfig?.databaseType) {
+      logger.error("Cannot create adapter without database type", {
+        schemaKey,
       });
       throw new Error(
-        `Adapter for database type '${schema.database_type}' is not registered. ` +
-          `Please call DatabaseFactory.registerAdapter() first.`
+        `No adapter registered for schema '${schemaKey}' and no database type provided. ` +
+          `Please provide dbConfig with databaseType or register adapter instance first.`
       );
     }
 
-    // Tạo dbConfig nếu chưa có
-    const finalDbConfig: DbConfig = dbConfig || {
-      databaseType: schema.database_type || "sqlite",
-      database: schema.database_name,
-      dbName: schema.database_name,
-      host: "localhost",
-      port: this.getDefaultPort(schema.database_type || "sqlite"),
-      username: "root",
-      password: "",
-    };
+    // 3. Đảm bảo adapter class được đăng ký (với lazy loading)
+    const AdapterClass = await this.ensureAdapterClassRegistered(
+      dbConfig.databaseType
+    );
 
-    logger.debug("Created final dbConfig", {
+    // 4. Tạo và đăng ký adapter instance mới
+    logger.debug("Creating new adapter instance", {
       schemaKey,
-      databaseType: finalDbConfig.databaseType,
-      databaseName: finalDbConfig.dbName,
+      databaseType: dbConfig.databaseType,
     });
 
-    // Tạo adapter instance
-    const adapter = new AdapterClass(finalDbConfig);
+    const adapter = this.createAdapterFromClass(AdapterClass, dbConfig);
+    this.registerAdapterInstance(schemaKey, adapter);
 
-    // ✅ KEY: Tự động register adapter mới tạo
-    logger.info("Auto-registering newly created adapter", { schemaKey });
-    AdapterInstanceRegistry.set(schemaKey, adapter);
-
-    logger.debug("Adapter instance created and registered successfully", {
+    logger.info("New adapter instance created and registered", {
       schemaKey,
-      databaseType: schema.database_type,
-      databaseName: schema.database_name,
+      databaseType: adapter.databaseType,
     });
 
     return adapter;
   }
 
-  // ==================== DAO CREATION (FIXED) ====================
+  // ==================== DAO CREATION ====================
 
   /**
-   * ✅ FIXED: Tạo UniversalDAO từ schema key với adapter sharing
-   * KHÔNG tự động gọi initializeTables() nữa
+   * Tạo UniversalDAO từ schema key với adapter sharing
    */
   public static async createDAO(
     schemaKey: string,
     options?: Partial<
       DbFactoryOptions & {
-        autoInitializeTables?: boolean; // ✅ THÊM FLAG MỚI chỉ thị khi nào cần khởi tạo mới table thì đặt nó = true
+        autoInitializeTables?: boolean;
       }
     >
   ): Promise<UniversalDAO<any>> {
     logger.info("Creating DAO with adapter sharing", {
       schemaKey,
-      optionsKeys: options ? Object.keys(options) : [],
+      hasOptions: !!options,
       hasRegisteredAdapter: AdapterInstanceRegistry.has(schemaKey),
     });
 
     // 1. Lấy schema
+
     const schema = SchemaRegistry.get(schemaKey);
     if (!schema) {
       logger.error("Schema not found", { schemaKey });
@@ -363,86 +324,57 @@ export class DatabaseFactory {
       );
     }
 
-    logger.debug("Retrieved schema", {
-      schemaKey,
-      databaseType: schema.database_type,
-    });
+    logger.debug("Resulte DAO for schema", { schemaKey });
 
     // 2. Lấy hoặc tạo adapter
     const adapter = await this.createAdapterInstance(
-      schema,
       schemaKey,
-      options?.dbConfig,
-      options?.adapter
+      options?.dbConfig
     );
 
-    logger.debug("Adapter obtained for DAO", {
-      schemaKey,
-      isConnected: adapter.isConnected(),
-      isFromRegistry: AdapterInstanceRegistry.get(schemaKey) === adapter,
+    logger.debug("Adapter in database_type of database_name:", {
+      databaseType: adapter.databaseType,
+      databaseName: schema.database_name,
     });
 
     // 3. Kiểm tra hỗ trợ
-    const checkAdapterSupport = options?.validateSchema !== false;
-    if (checkAdapterSupport && !adapter.isSupported()) {
+    if (options?.validateSchema !== false && !adapter.isSupported()) {
       logger.error("Adapter not supported in current environment", {
         schemaKey,
-        databaseType: schema.database_type,
+        databaseType: adapter.databaseType,
       });
       throw new Error(
-        `Database type '${schema.database_type}' is not supported in the current environment or missing dependencies.`
+        `Database type '${adapter.databaseType}' is not supported in the current environment.`
       );
     }
 
     // 4. Tạo DAO
-    const dao = new UniversalDAO(
-      adapter,
-      schema,
-      options?.dbConfig || adapter.getConnection()?.rawConnection,
-      schemaKey
+    const dao = new UniversalDAO(adapter, schema);
+    logger.debug(
+      "UniversalDAO created and waiting for connected to database: ",
+      {
+        databaseType: adapter.databaseType,
+        databaseName: schema.database_name,
+      }
     );
 
-    logger.debug("UniversalDAO instance created", { schemaKey });
+    // 5. Kết nối
+    await dao.connect();
+    logger.debug("UniversalDAO instance created and connected for schemaKey", { schemaKey });
 
-    // 5. Auto-connect
-    const autoConnect = options?.autoConnect !== false;
-    const needsConnection = autoConnect && !adapter.isConnected();
-
-    if (needsConnection) {
-      logger.debug("Adapter not connected, auto-connecting DAO", {
-        schemaKey,
-        adapterConnected: adapter.isConnected(),
-      });
-      await dao.ensureConnected();
-      logger.info("DAO connected successfully", { schemaKey });
-    } else if (adapter.isConnected()) {
-      logger.info("Adapter already connected, skipping auto-connect", {
-        schemaKey,
-        adapterConnected: true,
-      });
-    } else {
-      logger.debug("Auto-connect disabled, skipping connection", { schemaKey });
-    }
-
-    // 6. Validate schema
+    // 6. Validate schema (optional)
     if (options?.validateSchema) {
       logger.debug("Validating schema", { schemaKey });
       await this.validateSchema(dao, schema);
-      logger.info("Schema validation completed", { schemaKey });
     }
 
-    // ✅ FIXED: CHỈ initialize tables khi được yêu cầu EXPLICIT
+    // 7. Initialize tables (chỉ khi được yêu cầu)
     if (options?.autoInitializeTables === true) {
-      logger.debug("Auto-initializing tables as requested", { schemaKey });
-      // Gọi initializeTablesInternal để tránh đệ quy
+      logger.debug("Auto-initializing tables", { schemaKey });
       await this.initializeTablesInternal(dao, schemaKey);
     }
 
-    logger.info("DAO created successfully with shared adapter", {
-      schemaKey,
-      adapterShared: AdapterInstanceRegistry.get(schemaKey) === adapter,
-    });
-
+    logger.info("DAO created successfully", { schemaKey });
     return dao;
   }
 
@@ -454,57 +386,46 @@ export class DatabaseFactory {
     checkAdapterSupport: boolean = true
   ): Promise<UniversalDAO<any>> {
     logger.trace("Creating or opening DAO", {
-      databaseName: options.config.database_name,
-      checkAdapterSupport,
+      databaseName: options.configSchema.database_name,
     });
 
-    const { config: schema } = options;
+    const { configSchema: schema } = options;
+    const schemaKey = schema.database_name;
 
     // Đăng ký schema nếu chưa có
-    const schemaKey = schema.database_name;
     if (!SchemaRegistry.has(schemaKey)) {
       logger.debug("Schema not registered, registering now", { schemaKey });
       SchemaRegistry.set(schemaKey, schema);
     }
 
-    const dao = await this.createDAO(schemaKey, {
+    return await this.createDAO(schemaKey, {
       ...options,
       validateSchema: checkAdapterSupport,
     });
-
-    logger.debug("DAO created/opened successfully via compatibility method", {
-      schemaKey,
-    });
-
-    return dao;
   }
 
   /**
    * Tạo adapter instance (standalone)
    */
-  public static createAdapter<TConnection extends IConnection = IConnection>(
-    type: DatabaseType,
-    config?: DbConfig
-  ): IAdapter<TConnection> {
+  public static async createAdapter<
+    TConnection extends IConnection = IConnection
+  >(type: DatabaseType, config?: DbConfig): Promise<IAdapter<TConnection>> {
     logger.trace("Creating standalone adapter", { type });
 
-    const AdapterClass = AdapterRegistry.get(type);
-    if (!AdapterClass) {
-      logger.error("Adapter class not found for standalone creation", { type });
-      throw new Error(`Adapter for database type '${type}' is not registered.`);
-    }
-
-    const adapter = new AdapterClass(config) as IAdapter<TConnection>;
+    const AdapterClass = await this.ensureAdapterClassRegistered(type);
+    const adapter = this.createAdapterFromClass(
+      AdapterClass,
+      config
+    ) as IAdapter<TConnection>;
 
     logger.debug("Standalone adapter created successfully", { type });
-
     return adapter;
   }
 
-  // ==================== TABLE INITIALIZATION (FIXED) ====================
+  // ==================== TABLE INITIALIZATION ====================
 
   /**
-   * ✅ FIXED: Internal method - Khởi tạo tables KHÔNG tạo DAO mới
+   * Internal method - Khởi tạo tables KHÔNG tạo DAO mới
    */
   private static async initializeTablesInternal(
     dao: UniversalDAO<any>,
@@ -523,11 +444,6 @@ export class DatabaseFactory {
 
     const schema = dao.getSchema();
     const targetEntities = entityNames || Object.keys(schema.schemas);
-
-    logger.debug("Target entities determined", {
-      schemaKey,
-      entities: targetEntities,
-    });
 
     await dao.ensureConnected();
 
@@ -562,14 +478,14 @@ export class DatabaseFactory {
       }
     }
 
-    logger.info("All tables initialized successfully (internal)", {
+    logger.info("All tables initialized successfully", {
       schemaKey,
       tableCount: orderedEntities.length,
     });
   }
 
   /**
-   * ✅ FIXED: Public method - Khởi tạo nhiều bảng (SỬ DỤNG DAO ĐÃ CÓ)
+   * Public method - Khởi tạo nhiều bảng
    */
   public static async initializeTables(
     schemaKey: string,
@@ -582,17 +498,13 @@ export class DatabaseFactory {
       adapter?: IAdapter<any>;
     }
   ): Promise<UniversalDAO<any>> {
-    // ✅ NGĂN CHẶN ĐỆ QUY
+    // Ngăn chặn đệ quy
     if (InitializingSchemas.has(schemaKey)) {
-      logger.warn("Already initializing tables for this schema, skipping", {
-        schemaKey,
-      });
-      // Trả về DAO hiện tại thay vì tạo mới
-      const dao = await this.createDAO(schemaKey, {
+      logger.warn("Already initializing tables, skipping", { schemaKey });
+      return await this.createDAO(schemaKey, {
         ...options,
-        autoInitializeTables: false, // ✅ TẮT auto-init
+        autoInitializeTables: false,
       });
-      return dao;
     }
 
     InitializingSchemas.add(schemaKey);
@@ -601,19 +513,18 @@ export class DatabaseFactory {
       logger.info("Initializing multiple tables", {
         schemaKey,
         entityCount: entityNames?.length || "all",
-        forceRecreate: options?.forceRecreate || false,
       });
 
-      // 1. Tạo DAO KHÔNG auto-initialize
+      // Tạo DAO KHÔNG auto-initialize
       const dao = await this.createDAO(schemaKey, {
         dbConfig: options?.dbConfig,
         adapter: options?.adapter,
         autoConnect: options?.autoConnect !== false,
         validateSchema: false,
-        autoInitializeTables: false, // ✅ QUAN TRỌNG: TẮT auto-init
+        autoInitializeTables: false,
       });
 
-      // 2. Sử dụng internal method để initialize
+      // Sử dụng internal method để initialize
       await this.initializeTablesInternal(dao, schemaKey, entityNames, options);
 
       return dao;
@@ -623,7 +534,7 @@ export class DatabaseFactory {
   }
 
   /**
-   * ✅ FIXED: Khởi tạo một bảng đơn lẻ
+   * Khởi tạo một bảng đơn lẻ
    */
   public static async initializeTable(
     schemaKey: string,
@@ -636,18 +547,12 @@ export class DatabaseFactory {
       adapter?: IAdapter<any>;
     }
   ): Promise<UniversalDAO<any>> {
-    logger.info("Initializing single table", {
-      schemaKey,
-      entityName,
-      forceRecreate: options?.forceRecreate || false,
-    });
-
-    // Sử dụng initializeTables với single entity
+    logger.info("Initializing single table", { schemaKey, entityName });
     return await this.initializeTables(schemaKey, [entityName], options);
   }
 
   /**
-   * ✅ Helper: Giải quyết thứ tự dependency cho danh sách entities
+   * Helper: Giải quyết thứ tự dependency
    */
   private static resolveDependencyOrderForEntities(
     schema: DatabaseSchema,
@@ -671,7 +576,6 @@ export class DatabaseFactory {
       if (entitySchema?.foreign_keys) {
         for (const fk of entitySchema.foreign_keys) {
           const refTable = fk.references.table;
-          // Chỉ visit nếu refTable nằm trong danh sách cần tạo
           if (
             entityNames.includes(refTable) &&
             schemas[refTable] &&
@@ -687,37 +591,17 @@ export class DatabaseFactory {
       order.push(entityName);
     };
 
-    // Visit các entities trong danh sách
     for (const entityName of entityNames) {
       if (schemas[entityName]) {
         visit(entityName);
       }
     }
 
-    logger.debug("Resolved dependency order for specific entities", { order });
+    logger.debug("Resolved dependency order", { order });
     return order;
   }
 
-  // ==================== HELPER METHODS ====================
-
-  private static getDefaultPort(dbType: DatabaseType): number {
-    logger.trace("Getting default port", { dbType });
-
-    const portMap: Record<DatabaseType, number> = {
-      postgresql: 5432,
-      mysql: 3306,
-      mariadb: 3306,
-      sqlite: 0,
-      sqlserver: 1433,
-      mongodb: 27017,
-      oracle: 0,
-    };
-    const port = portMap[dbType] || 0;
-
-    logger.trace("Default port retrieved", { dbType, port });
-
-    return port;
-  }
+  // ==================== VALIDATION & UTILITIES ====================
 
   private static async validateSchema(
     dao: UniversalDAO,
@@ -729,59 +613,36 @@ export class DatabaseFactory {
     });
 
     for (const [entityName, entitySchema] of Object.entries(schema.schemas)) {
-      logger.trace("Validating entity", { entityName });
-
       const adapter = dao.getAdapter();
       const exists = await adapter.tableExists(entityName);
 
       if (!exists) {
-        logger.warn(
-          `Table/Collection '${entityName}' does not exist. Creating...`,
-          { entityName, schemaName: schema.database_name }
-        );
+        logger.warn(`Table '${entityName}' does not exist, creating...`);
+
         const schemaDefinition: any = {};
         for (const col of entitySchema.cols) {
-          const fieldName = col.name || "";
-          if (fieldName) {
-            schemaDefinition[fieldName] = col;
+          if (col.name) {
+            schemaDefinition[col.name] = col;
           }
         }
-        await adapter.createTable(entityName, schemaDefinition);
 
-        logger.info("Table/Collection created", {
-          entityName,
-          schemaName: schema.database_name,
-        });
-      } else {
-        logger.debug("Entity already exists, skipping creation", {
-          entityName,
-        });
+        await adapter.createTable(entityName, schemaDefinition);
+        logger.info("Table created", { entityName });
       }
     }
 
-    logger.trace("Schema validation completed", {
-      schemaName: schema.database_name,
-    });
+    logger.trace("Schema validation completed");
   }
 
   /**
    * Reset tất cả registries (dùng cho testing)
    */
   public static reset(): void {
-    logger.trace("Resetting all registries", {
-      stats: {
-        schemas: SchemaRegistry.size,
-        adapterClasses: AdapterRegistry.size,
-        adapterInstances: AdapterInstanceRegistry.size,
-        initializing: InitializingSchemas.size,
-      },
-    });
-
+    logger.trace("Resetting all registries");
     SchemaRegistry.clear();
     AdapterRegistry.clear();
     AdapterInstanceRegistry.clear();
-    InitializingSchemas.clear(); // ✅ THÊM
-
+    InitializingSchemas.clear();
     logger.debug("Registries reset successfully");
   }
 
@@ -793,16 +654,10 @@ export class DatabaseFactory {
     adapterClasses: number;
     adapterInstances: number;
   } {
-    logger.trace("Getting factory stats");
-
-    const stats = {
+    return {
       schemas: SchemaRegistry.size,
       adapterClasses: AdapterRegistry.size,
       adapterInstances: AdapterInstanceRegistry.size,
     };
-
-    logger.trace("Factory stats retrieved", { stats });
-
-    return stats;
   }
 }

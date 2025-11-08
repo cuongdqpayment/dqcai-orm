@@ -28,32 +28,37 @@ export class MySQLAdapter extends BaseAdapter {
     super(config);
   }
 
-  /*
-  Chuyển 2 hàm isSupported và connect về luôn Adapter, không cần tạo connection nữa
-  */
   isSupported(): boolean {
-    // Nếu đã connect → supported
-    if (this.pool || this.isConnected()) {
+    // Đã check và cache rồi
+    if (this.dbModule !== null) {
       return true;
     }
 
-    logger.trace("Checking MySQL support");
+    if (this.isConnected()) {
+      return true;
+    }
 
+    logger.trace("=== Checking MySQLDatabase support ===");
+
+    // Try mysql2
     try {
-      require.resolve("mysql2");
-      logger.debug("MySQL module 'mysql2' is supported");
-
+      this.dbModule = this.require("mysql2");
+      logger.debug("✓ Using 'mysql2' fallback module");
       return true;
-    } catch {
-      logger.debug("MySQL module 'mysql2' is not supported");
-
-      return false;
+    } catch (error) {
+      logger.trace("✗ mysql2 module not available:", (error as Error).message);
     }
+
+    logger.debug("✗ No MySQLDatabase modules supported");
+    return false;
   }
 
   async connect(schemaKey?: string): Promise<IConnection> {
     if (!this.dbConfig) throw Error("No database configuration provided.");
-    const config = this.dbConfig as MySQLConfig;
+    const config = {
+      ...this.dbConfig,
+      database: schemaKey || this.dbConfig.database, // ưu tiên lấy database thuộc schemaConfig
+    } as MySQLConfig;
 
     logger.debug("Connecting to MySQL", {
       database: config.database,
@@ -69,6 +74,8 @@ export class MySQLAdapter extends BaseAdapter {
       logger.trace("Creating MySQL connection pool");
 
       const pool = mysql.createPool(config);
+
+      // trường hợp database chưa tạo thì phải tạo nó nhé (xem postgresql)
 
       logger.trace("Creating IConnection object");
 

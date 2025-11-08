@@ -27,6 +27,10 @@ export class PostgreSQLAdapter extends BaseAdapter {
   }
 
   isSupported(): boolean {
+    if (this.dbModule !== null) {
+      return true;
+    }
+
     if (this.pool || this.isConnected()) {
       return true;
     }
@@ -34,7 +38,7 @@ export class PostgreSQLAdapter extends BaseAdapter {
     logger.trace("Checking PostgreSQL support");
 
     try {
-      require.resolve("pg");
+      this.dbModule = this.require("pg");
       logger.debug("PostgreSQL module 'pg' is supported");
       return true;
     } catch {
@@ -49,7 +53,10 @@ export class PostgreSQLAdapter extends BaseAdapter {
 
   async connect(schemaKey?: string): Promise<IConnection> {
     if (!this.dbConfig) throw Error("No database configuration provided.");
-    const config = this.dbConfig as PostgreSQLConfig;
+    const config = {
+      ...this.dbConfig,
+      database: schemaKey || this.dbConfig.database, // ưu tiên lấy database thuộc schemaConfig
+    } as PostgreSQLConfig;
 
     logger.debug("Connecting to PostgreSQL", {
       database: config.database,

@@ -2,7 +2,7 @@
 // src/adapters/mariadb-adapter.ts
 // ========================
 
-import { DatabaseType, IConnection } from "@/types/orm.types";
+import { DatabaseType, DbConfig, IConnection } from "@/types/orm.types";
 import { MySQLAdapter } from "./mysql-adapter";
 import { createModuleLogger, ORMModules } from "@/logger";
 import { MariaDBConfig } from "@/types/database-config-types";
@@ -12,37 +12,52 @@ export class MariaDBAdapter extends MySQLAdapter {
   type: DatabaseType = "mariadb";
   databaseType: DatabaseType = "mariadb";
 
-  constructor(config: MariaDBConfig) {
+  constructor(config: DbConfig) {
     super(config);
   }
 
   isSupported(): boolean {
+    // Đã check và cache rồi
+    if (this.dbModule !== null) {
+      return true;
+    }
+
     if (this.isConnected()) {
       return true;
     }
 
-    logger.trace("Checking MariaDB support");
+    logger.trace("=== Checking MariaDB support ===");
 
+    // Try mariadb (preferred)
     try {
-      require.resolve("mariadb");
-      logger.debug("MariaDB module 'mariadb' is supported");
+      this.dbModule = this.require("mariadb");
+      logger.debug("✓ Using 'mariadb' module");
       return true;
-    } catch {
-      logger.trace("MariaDB module not available, checking mysql2");
-      try {
-        require.resolve("mysql2");
-        logger.debug("MariaDB fallback module 'mysql2' is supported");
-        return true;
-      } catch {
-        logger.debug("No MariaDB modules supported");
-        return false;
-      }
+    } catch (error) {
+      logger.trace("✗ mariadb module not available:", (error as Error).message);
     }
+
+    // Try mysql2 (fallback)
+    try {
+      this.dbModule = this.require("mysql2");
+      logger.debug("✓ Using 'mysql2' fallback module");
+      return true;
+    } catch (error) {
+      logger.trace("✗ mysql2 module not available:", (error as Error).message);
+    }
+
+    logger.debug("✗ No MariaDB modules supported");
+    return false;
   }
 
   async connect(schemaKey?: string): Promise<IConnection> {
     if (!this.dbConfig) throw Error("No database configuration provided.");
-    const config = this.dbConfig as MariaDBConfig;
+
+    const config = {
+      ...this.dbConfig,
+      database: schemaKey || this.dbConfig.database, // ưu tiên lấy database thuộc schemaConfig
+    } as MariaDBConfig;
+
     logger.debug("Connecting to MariaDB", {
       database: config.database,
       host: config.host || "localhost",

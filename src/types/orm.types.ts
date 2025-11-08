@@ -173,12 +173,10 @@ export interface TableOptions {
  * Database schema
  */
 export interface DatabaseSchema {
-  version: string;
-  database_type?: DatabaseType;
-  database_name: string;
-  schemas: Record<string, EntitySchemaDefinition>;
-  type_mapping?: TypeMappingConfig["type_mapping"];
-  description?: string;
+  version: string;                // dạng của nó là số ví dụ : 1.0 để so sánh được dễ dàng
+  database_name: string;          // tên database hoặc schema hoặc tên file của sqlite
+  schemas: Record<string, EntitySchemaDefinition>;  //tập cấu trúc định nghĩa cá bảng
+  description?: string;            // Mô tả database này để làm gì, mục đích cho developer hiểu ý nghĩa của database phục vụ cái gì
 }
 
 /**

@@ -1,10 +1,10 @@
 // ========================
 // src/adapters/sqlite-adapter.ts
 // ========================
-
 import { BaseAdapter } from "@/core/base-adapter";
 import {
   DatabaseType,
+  DbConfig,
   EntitySchemaDefinition,
   ForeignKeyDefinition,
   ForeignKeyInfo,
@@ -22,37 +22,50 @@ export class SQLiteAdapter extends BaseAdapter {
   databaseType: DatabaseType = "sqlite";
   private db: any = null;
 
-  constructor(config: SQLiteConfig) {
+  constructor(config: DbConfig) {
     super(config);
   }
 
-  /*
-  Chuyển 2 hàm isSupported và connect về luôn Adapter, không cần tạo connection nữa
-  */
   isSupported(): boolean {
-    // Nếu đã connect → supported
+    // Đã check rồi
+    if (this.dbModule !== null) {
+      return true;
+    }
+
     if (this.db || this.isConnected()) {
       return true;
     }
 
-    // Check better-sqlite3
+    logger.debug("=== Checking SQLite support ===");
+
+    // Try better-sqlite3
     try {
-      require.resolve("better-sqlite3");
+      this.dbModule = this.require("better-sqlite3");
+      logger.debug("✓ Using better-sqlite3");
       return true;
-    } catch {
-      // Check sqlite3 (fallback)
-      try {
-        require.resolve("sqlite3");
-        return true;
-      } catch {
-        return false;
-      }
+    } catch (error) {
+      logger.debug("✗ better-sqlite3:", (error as Error).message);
     }
+
+    // Try sqlite3
+    try {
+      this.dbModule = this.require("sqlite3");
+      logger.debug("✓ Using sqlite3");
+      return true;
+    } catch (error) {
+      logger.debug("✗ sqlite3:", (error as Error).message);
+    }
+
+    logger.error("✗ No SQLite module available!");
+    return false;
   }
 
   async connect(schemaKey?: string): Promise<IConnection> {
     if (!this.dbConfig) throw Error("No database configuration provided.");
-    const config = this.dbConfig as SQLiteConfig;
+    const config = {
+      ...this.dbConfig,
+      database: schemaKey || this.dbConfig.database, // ưu tiên lấy database thuộc schemaConfig
+    } as SQLiteConfig;
 
     logger.debug("Connecting to SQLite", {
       database: config.database,
@@ -68,7 +81,7 @@ export class SQLiteAdapter extends BaseAdapter {
       const filename = config.memory
         ? ":memory:"
         : config.filename ||
-          `${config.dbDirectory || "."}/${config.database|| schemaKey || "database"}.db`;
+          `${config.dbDirectory || "."}/${config.database || "database"}.db`;
 
       logger.trace("Creating SQLite database", { filename });
 

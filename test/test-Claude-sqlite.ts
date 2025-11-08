@@ -110,24 +110,17 @@ async function verifyForeignKeys() {
 // ========== Main Function ==========
 async function main() {
   try {
-    logger.debug("🔌 2.Registering Adapters...");
-    const adapter = new SQLiteAdapter(dbConfig);
-    
-    logger.debug("📋 3.Registering Schemas...");
+
+    logger.debug("📋 1.Registering Schemas...");
     DatabaseManager.registerSchema("core", coreSchema);
     
-    // 3. Register adapter instance in DatabaseManager and connect adapter
-    // This is the KEY FIX - register adapter BEFORE creating DAO
-    await DatabaseManager.registerAdapterInstance("core", adapter);
-    console.log("✓ Adapter registered in DatabaseManager");
-
-    logger.debug("🔧 4.Initializing database...\n");
-
-    // Verify config one more time
-    console.log("Final config check:", CommonLoggerConfig.getCurrentConfig());
-
     try {
-      await DatabaseManager.initializeSchema("core", { validateVersion: true });
+      logger.debug("🔧 2.Initializing database with validateVersion=true...\n");
+      // đặt option validateVersion=true để tạo bảng dữ liệu cho shema tương ứng version
+      await DatabaseManager.initializeSchema("core", {
+        dbConfig, // cấu hình csdl có trường database_type sẽ cho biết dùng adapter nào
+        validateVersion: true, // tạo bảng nếu version mới, hoặc mới khởi động chương trinhg
+      });
       console.log("✅ Schema initialized");
     } catch (error) {
       console.error("❌ Failed to initialize schema:", error);

@@ -116,11 +116,13 @@ export type ServiceManagerEventHandler = (event: ServiceManagerEvent) => void;
  * Database factory options
  */
 export interface DbFactoryOptions {
-  config: DatabaseSchema;
+  configSchema: DatabaseSchema;
   configAsset?: any;
   adapter?: IAdapter<any>;
   dbConfig?: DbConfig;
   autoConnect?: boolean;
   validateSchema?: boolean;
-  autoInitializeTables: boolean;
+  autoInitializeTables?: boolean;
+  forceRecreate?: boolean;
+  validateVersion?: boolean;
 }
