@@ -264,10 +264,8 @@ export class PostgreSQLAdapter extends BaseAdapter {
 
   async executeRaw(query: string, params?: any[]): Promise<any> {
     logger.trace("Executing raw PostgreSQL query", {
-      querySnippet:
-        query.substring(0, Math.min(100, query.length)) +
-        (query.length > 100 ? "..." : ""),
-      paramsCount: params?.length || 0,
+      query,
+      params,
     });
 
     if (!this.pool) {

@@ -8,8 +8,8 @@ services:
     
     # Thiết lập biến môi trường
     environment:
-      POSTGRES_USER: cuongdq
-      POSTGRES_PASSWORD: Cng3500888@
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: Admin@123
       POSTGRES_DB: test
       TZ: Asia/Ho_Chi_Minh
       PGTZ: Asia/Ho_Chi_Minh 
@@ -20,6 +20,9 @@ services:
       - "5432:5432"
       
     # Thiết lập Volume (để dữ liệu không bị mất khi container bị xóa)
+    # Khuyến nghị mount tại /var/lib/postgresql từ 18+ trở lên
+    # Lợi ích: PostgreSQL sẽ tự tạo /var/lib/postgresql/18/docker bên trong volume, và dữ liệu sẽ persist đúng cách.
+    # sẽ phù hợp với các docker 19+ sau này
     volumes:
       - postgres_data:/var/lib/postgresql
       

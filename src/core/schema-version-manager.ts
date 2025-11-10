@@ -17,19 +17,22 @@ export class SchemaVersionManager {
   private static readonly VERSION_TABLE = "_schema_versions";
 
   /**
-   * Định nghĩa schema cho bảng _schema_versions
+   * Định nghĩa schema cho bảng _schema_versions phù hợp với tất cả các loại cơ sở dũ liệu:
+   * sqlite, oracle, mysql, maria, postgresql, mongodb,
    */
   private static getVersionTableSchema(): Record<string, FieldDefinition> {
     return {
       schema_name: {
         name: "schema_name",
-        type: "text",
+        type: "varchar",
+        length: 255,
         primaryKey: true,
         required: true,
       },
       version: {
         name: "version",
-        type: "text",
+        type: "varchar",
+        length: 50,
         required: true,
       },
       created_at: {
@@ -46,9 +49,10 @@ export class SchemaVersionManager {
       },
       status: {
         name: "status",
-        type: "text",
+        type: "varchar",
+        length: 50,
         required: true,
-        default: "'active'",
+        default: "active",
       },
       metadata: {
         name: "metadata",

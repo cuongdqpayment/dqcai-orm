@@ -12,6 +12,7 @@ import {
   IConnection,
   IndexDefinition,
   SchemaDefinition,
+  Transaction,
 } from "@/types/orm.types";
 import { QueryHelper } from "@/utils/query-helper";
 import { createModuleLogger, ORMModules } from "@/logger";
@@ -22,6 +23,12 @@ export class SQLServerAdapter extends BaseAdapter {
   type: DatabaseType = "sqlserver";
   databaseType: DatabaseType = "sqlserver";
   private pool: any = null;
+  /**
+   * ✅ Sử dụng sql.Transaction native để tránh mismatch error
+   * Dự trữ connection riêng cho transaction scope
+   */
+  private currentTransaction: any = null; // Native mssql Transaction object
+
   constructor(config: DbConfig) {
     super(config);
   }
@@ -40,11 +47,9 @@ export class SQLServerAdapter extends BaseAdapter {
     try {
       this.dbModule = this.require("mssql");
       logger.debug("SQL Server module 'mssql' is supported");
-
       return true;
     } catch {
       logger.debug("SQL Server module 'mssql' is not supported");
-
       return false;
     }
   }
@@ -53,6 +58,7 @@ export class SQLServerAdapter extends BaseAdapter {
     if (!this.dbConfig) throw Error("No database configuration provided.");
     const config = {
       ...this.dbConfig,
+      abortTransactionOnError: true,
       database: schemaKey || this.dbConfig.database,
     } as SQLServerConfig;
 
@@ -64,40 +70,39 @@ export class SQLServerAdapter extends BaseAdapter {
 
     try {
       logger.trace("Dynamically importing 'mssql' module");
-      const sql = await import("mssql");
+      const sqlModule = await import("mssql");
+      const sql = sqlModule.default || sqlModule;
+
+      if (typeof sql.connect !== "function") {
+        throw new Error("mssql module does not have connect method");
+      }
 
       // ✅ STEP 1: Connect to master database to check/create target database
       logger.trace("Checking if target database exists");
       const checkConfig = {
         ...config,
-        database: "master", // ⚠️ Connect to master database
+        database: "master",
       };
 
       const checkPool = await sql.connect(checkConfig);
 
       try {
-        // ✅ Create request first, then bind parameters
         const checkRequest = checkPool.request();
         checkRequest.input("dbName", sql.VarChar, config.database);
 
-        // Check if database exists
         const result = await checkRequest.query(`
-        SELECT name FROM sys.databases WHERE name = @dbName
-      `);
+          SELECT name FROM sys.databases WHERE name = @dbName
+        `);
 
         if (result.recordset.length === 0) {
-          // ✅ Database doesn't exist, create it
           logger.info("Target database does not exist, creating it", {
             database: config.database,
           });
 
-          // ⚠️ Escape database name to prevent SQL injection
           const safeDatabaseName = config.database?.replace(
             /[^a-zA-Z0-9_]/g,
             ""
           );
-
-          // Note: Cannot use parameters for CREATE DATABASE
           await checkPool
             .request()
             .query(`CREATE DATABASE [${safeDatabaseName}]`);
@@ -150,33 +155,113 @@ export class SQLServerAdapter extends BaseAdapter {
       throw new Error(`SQL Server connection failed: ${error}`);
     }
   }
+
+  // ==========================================
+  // 🔧 OVERRIDE: buildCreateTableQuery - FIX FOR SQL SERVER
+  // ==========================================
+
+  /**
+   * ✅ SQL Server không hỗ trợ "CREATE TABLE IF NOT EXISTS"
+   * Phải dùng IF NOT EXISTS với sys.tables
+   */
+  protected buildCreateTableQuery(tableName: string, columns: string): string {
+    logger.trace("Building SQL Server CREATE TABLE query (no IF EXISTS)", {
+      tableName,
+    });
+
+    const quotedTableName = QueryHelper.quoteIdentifier(tableName, this.type);
+
+    // ✅ Tách phần constraint ra
+    const constraintRegex = /(CONSTRAINT\s+\[.*?\].*?REFERENCES.*?)(?:,|$)/g;
+    const constraints: string[] = [];
+    let pureColumns = columns.replace(constraintRegex, (_, c) => {
+      constraints.push(c.trim());
+      return "";
+    });
+
+    // ✅ Loại bỏ dấu phẩy dư trước dấu ngoặc đóng
+    pureColumns = pureColumns.replace(/,\s*\)/g, ")");
+
+    // ✅ Câu lệnh CREATE TABLE (không kiểm tra tồn tại)
+    let query = `CREATE TABLE ${quotedTableName} (${pureColumns});`;
+
+    // ✅ Nếu có constraint thì thêm ALTER TABLE sau khi CREATE TABLE
+    if (constraints.length > 0) {
+      for (const c of constraints) {
+        query += `\nALTER TABLE ${quotedTableName} ADD ${c};`;
+      }
+    }
+
+    logger.trace("SQL Server CREATE TABLE query built", {
+      tableName,
+      queryLength: query.length,
+    });
+
+    return query;
+  }
+
+  // ==========================================
+  // 🔧 OVERRIDE: formatDefaultValue - FIX DEFAULT CURRENT_TIMESTAMP
+  // ==========================================
+
+  /**
+   * ✅ SQL Server không hỗ trợ DEFAULT CURRENT_TIMESTAMP
+   * Phải dùng GETDATE() hoặc SYSDATETIME()
+   */
+  protected formatDefaultValue(value: any): string {
+    logger.trace("Formatting default value for SQL Server", {
+      value,
+      valueType: typeof value,
+    });
+
+    if (value === null) return "NULL";
+
+    if (typeof value === "string") {
+      // ✅ FIX: Convert CURRENT_TIMESTAMP to SQL Server equivalent
+      const upperValue = value.toUpperCase();
+
+      if (upperValue === "NOW()" || upperValue === "CURRENT_TIMESTAMP") {
+        logger.trace("Converting CURRENT_TIMESTAMP to SYSDATETIME()");
+        return "SYSDATETIME()";
+      }
+
+      if (upperValue === "GETDATE()") {
+        return "GETDATE()";
+      }
+
+      if (upperValue === "SYSDATETIME()") {
+        return "SYSDATETIME()";
+      }
+
+      // Escape single quotes for string values
+      return `'${value.replace(/'/g, "''")}'`;
+    }
+
+    if (typeof value === "boolean") {
+      return value ? "1" : "0";
+    }
+
+    return String(value);
+  }
+
   // ==========================================
   // REQUIRED ABSTRACT METHOD IMPLEMENTATIONS
   // ==========================================
 
-  /**
-   * ✅ SQL SERVER: Chuyển đổi kiểu dữ liệu
-   * - Date → ISO String hoặc SQL Server datetime format
-   * - Boolean → 1/0 (BIT)
-   * - Object/Array → JSON stringify (NVARCHAR(MAX))
-   */
   protected sanitizeValue(value: any): any {
     logger.trace("Sanitizing value", { valueType: typeof value });
 
-    // Handle null/undefined
     if (value === null || value === undefined) {
       logger.trace("Value is null/undefined, returning null");
       return null;
     }
 
-    // Handle Date objects → SQL Server datetime format
     if (value instanceof Date) {
       const formattedDate = value.toISOString().slice(0, 23).replace("T", " ");
       logger.trace("Converted Date to SQL Server datetime format");
       return formattedDate;
     }
 
-    // Handle boolean → 1/0
     if (typeof value === "boolean") {
       const numericValue = value ? 1 : 0;
       logger.trace("Converted Boolean to numeric", {
@@ -186,7 +271,6 @@ export class SQLServerAdapter extends BaseAdapter {
       return numericValue;
     }
 
-    // Handle arrays/objects → JSON stringify
     if (typeof value === "object" && !Buffer.isBuffer(value)) {
       const jsonString = JSON.stringify(value);
       logger.trace("Converted object/array to JSON string", {
@@ -195,7 +279,6 @@ export class SQLServerAdapter extends BaseAdapter {
       return jsonString;
     }
 
-    // Handle strings (escape single quotes)
     if (typeof value === "string") {
       const escapedValue = value.replace(/'/g, "''");
       logger.trace("Escaped string value");
@@ -206,20 +289,14 @@ export class SQLServerAdapter extends BaseAdapter {
     return value;
   }
 
-  /**
-   * ✅ SQL SERVER: Ánh xạ kiểu dữ liệu
-   */
   protected mapFieldTypeToDBType(fieldType: string, length?: number): string {
     logger.trace("Mapping field type to SQL Server", { fieldType, length });
 
     const typeMap: Record<string, string> = {
-      // String types
       string: length ? `NVARCHAR(${length})` : "NVARCHAR(255)",
       varchar: length ? `VARCHAR(${length})` : "VARCHAR(255)",
       text: "NVARCHAR(MAX)",
       char: length ? `CHAR(${length})` : "CHAR(1)",
-
-      // Number types
       number: "DECIMAL(18,2)",
       integer: "INT",
       int: "INT",
@@ -228,24 +305,16 @@ export class SQLServerAdapter extends BaseAdapter {
       double: "FLOAT(53)",
       decimal: "DECIMAL",
       numeric: "NUMERIC",
-
-      // Boolean → BIT
       boolean: "BIT",
       bool: "BIT",
-
-      // Date/Time
       date: "DATE",
       datetime: "DATETIME2",
       timestamp: "DATETIME2",
       time: "TIME",
-
-      // JSON → NVARCHAR(MAX) (SQL Server 2016+ có FOR JSON)
       json: "NVARCHAR(MAX)",
       jsonb: "NVARCHAR(MAX)",
       array: "NVARCHAR(MAX)",
       object: "NVARCHAR(MAX)",
-
-      // Others
       uuid: "UNIQUEIDENTIFIER",
       binary: "VARBINARY(MAX)",
       blob: "VARBINARY(MAX)",
@@ -257,10 +326,6 @@ export class SQLServerAdapter extends BaseAdapter {
     return mappedType;
   }
 
-  /**
-   * ✅ SQL SERVER: Xử lý kết quả INSERT
-   * SQL Server hỗ trợ OUTPUT INSERTED.*
-   */
   protected async processInsertResult(
     tableName: string,
     result: any,
@@ -272,17 +337,13 @@ export class SQLServerAdapter extends BaseAdapter {
       hasRows: !!result.rows?.length,
     });
 
-    // Nếu có OUTPUT INSERTED.*, result sẽ chứa row
     if (result.rows && result.rows.length > 0) {
       const processedRow = result.rows[0];
       logger.trace("Using OUTPUT INSERTED.* row");
       return processedRow;
     }
 
-    // Fallback: Query lại bằng SCOPE_IDENTITY()
     const pkField = primaryKeys?.[0] || "id";
-
-    // Lấy SCOPE_IDENTITY() (last inserted ID)
     const identityQuery = `SELECT SCOPE_IDENTITY() AS id`;
     logger.trace("Executing SCOPE_IDENTITY query");
     const identityResult = await this.executeRaw(identityQuery);
@@ -295,7 +356,6 @@ export class SQLServerAdapter extends BaseAdapter {
       return data;
     }
 
-    // Query lại bản ghi
     const query = `SELECT * FROM ${QueryHelper.quoteIdentifier(
       tableName,
       this.type
@@ -321,24 +381,60 @@ export class SQLServerAdapter extends BaseAdapter {
     return insertedRecord;
   }
 
-  /**
-   * ✅ SQL SERVER: Placeholder = @p1, @p2, @p3...
-   */
   protected getPlaceholder(index: number): string {
     logger.trace("Getting SQL Server placeholder", { index });
     return `@p${index}`;
   }
 
   // ==========================================
+  // 🔧 OVERRIDE: buildAutoIncrementColumn
+  // ==========================================
+
+  /**
+   * ✅ SQL Server sử dụng IDENTITY(1,1) cho auto increment
+   * ⚠️ IDENTITY phải đi kèm PRIMARY KEY
+   */
+  protected buildAutoIncrementColumn(
+    name: string,
+    type: string,
+    isPrimaryKey: boolean = true
+  ): string {
+    logger.trace("Building auto-increment column for SQL Server", {
+      name,
+      type,
+      isPrimaryKey,
+    });
+
+    // ✅ SQL Server: IDENTITY phải có PRIMARY KEY
+    if (isPrimaryKey) {
+      const column = `${name} ${type} IDENTITY(1,1) PRIMARY KEY`;
+      logger.trace("Auto-increment column with PRIMARY KEY", { column });
+      return column;
+    } else {
+      // ⚠️ SQL Server yêu cầu IDENTITY phải có index
+      const column = `${name} ${type} IDENTITY(1,1) UNIQUE`;
+      logger.trace("Auto-increment column with UNIQUE constraint", { column });
+      return column;
+    }
+  }
+
+  // ==========================================
   // SQL SERVER-SPECIFIC IMPLEMENTATIONS
   // ==========================================
 
+  // ==========================================
+  // 🔧 OVERRIDE: executeRaw - SUPPORT TRANSACTION SCOPING
+  // ==========================================
+
+  /**
+   * ✅ Nếu có currentTransaction, dùng transaction.request() thay vì pool.request()
+   * Đảm bảo tất cả query trong transaction scope an toàn
+   */
   async executeRaw(query: string, params?: any[]): Promise<any> {
     logger.trace("Executing raw SQL Server query", {
-      querySnippet:
-        query.substring(0, Math.min(100, query.length)) +
-        (query.length > 100 ? "..." : ""),
-      paramsCount: params?.length || 0,
+      query: query.substring(0, 100) + (query.length > 100 ? "..." : ""),
+      params: params?.length || 0,
+      inTransaction: !!this.currentTransaction,
     });
 
     if (!this.pool) {
@@ -346,31 +442,49 @@ export class SQLServerAdapter extends BaseAdapter {
       throw new Error("Not connected to SQL Server");
     }
 
-    const request = this.pool.request();
+    let request: any;
 
-    // Bind parameters
+    if (this.currentTransaction) {
+      // ✅ Dùng transaction.request() cho scope
+      request = new (this.dbModule as any).Request(this.currentTransaction);
+      logger.trace("Using transaction request for query");
+    } else {
+      // Fallback: pool.request()
+      request = this.pool.request();
+      logger.trace("Using pool request for query");
+    }
+
+    // Bind params
     params?.forEach((param, index) => {
-      logger.trace("Binding parameter", {
-        index: index + 1,
-        paramType: typeof param,
+      const paramName = `p${index + 1}`;
+      logger.trace("Binding parameter", { paramName, paramType: typeof param });
+      request.input(paramName, param);
+    });
+
+    try {
+      const result = await request.query(query);
+
+      const formattedResult = {
+        rows: result.recordset || [],
+        rowCount: result.rowsAffected?.[0] || 0,
+        rowsAffected: result.rowsAffected?.[0] || 0,
+      };
+
+      logger.trace("Raw query executed successfully", {
+        rowCount: formattedResult.rows.length,
+        rowsAffected: formattedResult.rowsAffected,
+        inTransaction: !!this.currentTransaction,
       });
-      request.input(`p${index + 1}`, param);
-    });
 
-    const result = await request.query(query);
-
-    const formattedResult = {
-      rows: result.recordset || [],
-      rowCount: result.rowsAffected?.[0] || 0,
-      rowsAffected: result.rowsAffected?.[0] || 0,
-    };
-
-    logger.trace("Raw query executed", {
-      rowCount: formattedResult.rows.length,
-      rowsAffected: formattedResult.rowsAffected,
-    });
-
-    return formattedResult;
+      return formattedResult;
+    } catch (error) {
+      logger.error("Raw query execution failed", {
+        query: query.substring(0, 100) + "...",
+        error: (error as Error).message,
+        inTransaction: !!this.currentTransaction,
+      });
+      throw error;
+    }
   }
 
   async tableExists(tableName: string): Promise<boolean> {
@@ -397,6 +511,7 @@ export class SQLServerAdapter extends BaseAdapter {
       ORDER BY ORDINAL_POSITION
     `;
     const result = await this.executeRaw(query, [tableName]);
+
     if (result.rows.length === 0) {
       logger.debug("No table info found", { tableName });
       return null;
@@ -417,13 +532,6 @@ export class SQLServerAdapter extends BaseAdapter {
     });
 
     return tableInfo;
-  }
-
-  protected buildAutoIncrementColumn(name: string, type: string): string {
-    logger.trace("Building auto-increment column", { name, type });
-    const autoIncrementColumn = `${name} ${type} IDENTITY(1,1)`;
-    logger.trace("Auto-increment column built", { autoIncrementColumn });
-    return autoIncrementColumn;
   }
 
   // ========================================
@@ -546,18 +654,18 @@ export class SQLServerAdapter extends BaseAdapter {
     this.ensureConnected();
 
     const query = `
-    SELECT
-      fk.name AS constraint_name,
-      COL_NAME(fkc.parent_object_id, fkc.parent_column_id) AS column_name,
-      OBJECT_NAME(fk.referenced_object_id) AS referenced_table,
-      COL_NAME(fkc.referenced_object_id, fkc.referenced_column_id) AS referenced_column,
-      fk.delete_referential_action_desc AS delete_rule,
-      fk.update_referential_action_desc AS update_rule
-    FROM sys.foreign_keys AS fk
-    INNER JOIN sys.foreign_key_columns AS fkc
-      ON fk.object_id = fkc.constraint_object_id
-    WHERE OBJECT_NAME(fk.parent_object_id) = @tableName
-  `;
+      SELECT
+        fk.name AS constraint_name,
+        COL_NAME(fkc.parent_object_id, fkc.parent_column_id) AS column_name,
+        OBJECT_NAME(fk.referenced_object_id) AS referenced_table,
+        COL_NAME(fkc.referenced_object_id, fkc.referenced_column_id) AS referenced_column,
+        fk.delete_referential_action_desc AS delete_rule,
+        fk.update_referential_action_desc AS update_rule
+      FROM sys.foreign_keys AS fk
+      INNER JOIN sys.foreign_key_columns AS fkc
+        ON fk.object_id = fkc.constraint_object_id
+      WHERE OBJECT_NAME(fk.parent_object_id) = @p1
+    `;
 
     const result = await this.executeRaw(query, [tableName]);
 
@@ -593,47 +701,10 @@ export class SQLServerAdapter extends BaseAdapter {
     }
   }
 
-  // OVERRIDE createTable() của base-adapter
-  /* async createTable(
-    tableName: string,
-    schema: SchemaDefinition,
-    foreignKeys?: ForeignKeyDefinition[]
-  ): Promise<void> {
-    logger.debug("Creating SQL Server table with foreign keys", { tableName });
-
-    this.ensureConnected();
-
-    const columns: string[] = [];
-
-    for (const [fieldName, fieldDef] of Object.entries(schema)) {
-      const columnDef = this.buildColumnDefinition(fieldName, fieldDef);
-      columns.push(columnDef);
-    }
-
-    // ✅ Build inline foreign key constraints
-    const constraints = this.buildInlineConstraints(
-      tableName,
-      foreignKeys || []
-    );
-    const allColumns = [...columns, ...constraints].join(", ");
-
-    const query = this.buildCreateTableQuery(tableName, allColumns);
-
-    await this.executeRaw(query, []);
-
-    logger.info("SQL Server table created with foreign keys", {
-      tableName,
-      foreignKeyCount: constraints.length,
-    });
-  } */
-
   // ==========================================
   // OVERRIDE INSERT ONE (với OUTPUT INSERTED.*)
   // ==========================================
 
-  /**
-   * 🔄 OVERRIDE: SQL Server hỗ trợ OUTPUT INSERTED.*
-   */
   async insertOne(tableName: string, data: any): Promise<any> {
     logger.debug("Inserting one record", {
       tableName,
@@ -643,7 +714,6 @@ export class SQLServerAdapter extends BaseAdapter {
     this.ensureConnected();
     const keys = Object.keys(data);
 
-    // ✅ Sanitize all values
     const values = Object.values(data).map((v) => this.sanitizeValue(v));
 
     const placeholders = keys.map((_, i) => `@p${i + 1}`).join(", ");
@@ -651,7 +721,6 @@ export class SQLServerAdapter extends BaseAdapter {
       .map((k) => QueryHelper.quoteIdentifier(k, this.type))
       .join(", ");
 
-    // SQL Server hỗ trợ OUTPUT INSERTED.*
     const query = `INSERT INTO ${QueryHelper.quoteIdentifier(
       tableName,
       this.type
@@ -665,7 +734,6 @@ export class SQLServerAdapter extends BaseAdapter {
 
     const result = await this.executeRaw(query, values);
 
-    // ✅ Process result
     const insertedRecord = await this.processInsertResult(
       tableName,
       result,
@@ -679,5 +747,272 @@ export class SQLServerAdapter extends BaseAdapter {
     });
 
     return insertedRecord;
+  }
+
+  // ==========================================
+  // 🔧 OVERRIDE: find() - FIX LIMIT/OFFSET FOR SQL SERVER
+  // ==========================================
+
+  /**
+   * ✅ SQL Server không hỗ trợ LIMIT/OFFSET
+   * Phải dùng TOP hoặc OFFSET...FETCH NEXT
+   */
+  async find(tableName: string, filter: any, options?: any): Promise<any[]> {
+    logger.trace("Finding records (SQL Server)", {
+      tableName,
+      filter,
+      options,
+    });
+
+    this.ensureConnected();
+
+    const { clause, params } = QueryHelper.buildWhereClause(filter, this.type);
+    const selectFields = QueryHelper.buildSelectFields(
+      options?.select || options?.fields || [],
+      this.type
+    );
+
+    let query = `SELECT ${selectFields} FROM ${QueryHelper.quoteIdentifier(
+      tableName,
+      this.type
+    )}`;
+
+    if (clause !== "1=1") query += ` WHERE ${clause}`;
+
+    // ✅ Handle ORDER BY
+    let hasOrderBy = false;
+    if (options?.sort || options?.orderBy) {
+      const orderBy = QueryHelper.buildOrderBy(
+        options.sort || options.orderBy || {},
+        this.type
+      );
+      query += ` ORDER BY ${orderBy}`;
+      hasOrderBy = true;
+    }
+
+    // ✅ SQL Server PAGINATION:
+    // Option 1: TOP (simple, for limit only without offset)
+    // Option 2: OFFSET...FETCH NEXT (requires ORDER BY)
+
+    const limit = options?.limit;
+    const offset = options?.offset || options?.skip || 0;
+
+    if (limit || offset > 0) {
+      if (offset > 0) {
+        // ✅ OFFSET...FETCH NEXT requires ORDER BY
+        if (!hasOrderBy) {
+          // Add default ORDER BY if not specified
+          query += ` ORDER BY (SELECT NULL)`;
+        }
+
+        query += ` OFFSET ${offset} ROWS`;
+
+        if (limit) {
+          query += ` FETCH NEXT ${limit} ROWS ONLY`;
+        }
+      } else if (limit) {
+        // ✅ Use TOP for simple limit without offset
+        // Rebuild query with TOP
+        query = `SELECT TOP ${limit} ${selectFields} FROM ${QueryHelper.quoteIdentifier(
+          tableName,
+          this.type
+        )}`;
+
+        if (clause !== "1=1") query += ` WHERE ${clause}`;
+
+        if (hasOrderBy) {
+          const orderBy = QueryHelper.buildOrderBy(
+            options.sort || options.orderBy || {},
+            this.type
+          );
+          query += ` ORDER BY ${orderBy}`;
+        }
+      }
+    }
+
+    logger.trace("Executing find query (SQL Server)", {
+      tableName,
+      query: query.substring(0, 200),
+      params,
+    });
+
+    const result = await this.executeRaw(query, params);
+
+    logger.trace("Found records (SQL Server)", {
+      tableName,
+      count: result.rows?.length || 0,
+    });
+
+    return result.rows || [];
+  }
+
+  // ==========================================
+  // 🔧 OVERRIDE: findOne() - OPTIMIZED FOR SQL SERVER
+  // ==========================================
+
+  /**
+   * ✅ Tối ưu findOne() cho SQL Server với TOP 1
+   */
+  async findOne(
+    tableName: string,
+    filter: any,
+    options?: any
+  ): Promise<any | null> {
+    logger.trace("Finding one record (SQL Server)", { tableName, filter });
+
+    const results = await this.find(tableName, filter, {
+      ...options,
+      limit: 1,
+    });
+
+    logger.trace("Found one record (SQL Server)", {
+      tableName,
+      found: !!results[0],
+    });
+
+    return results[0] || null;
+  }
+
+  // ==========================================
+  // 🔧 OVERRIDE: count() - OPTIMIZED FOR SQL SERVER
+  // ==========================================
+
+  /**
+   * ✅ SQL Server count() không có vấn đề, nhưng override để logging
+   */
+  async count(tableName: string, filter?: any): Promise<number> {
+    logger.trace("Counting records (SQL Server)", { tableName, filter });
+
+    this.ensureConnected();
+    const { clause, params } = QueryHelper.buildWhereClause(
+      filter || {},
+      this.type
+    );
+
+    let query = `SELECT COUNT(*) as count FROM ${QueryHelper.quoteIdentifier(
+      tableName,
+      this.type
+    )}`;
+
+    if (clause !== "1=1") query += ` WHERE ${clause}`;
+
+    const result = await this.executeRaw(query, params);
+    const countValue = parseInt(result.rows?.[0]?.count || "0");
+
+    logger.trace("Counted records (SQL Server)", {
+      tableName,
+      count: countValue,
+    });
+
+    return countValue;
+  }
+
+  // TRANSACTIONS
+  // ==========================================
+  // 🔧 OVERRIDE: beginTransaction - FIX FOR SQL SERVER
+  // ==========================================
+
+  /**
+   * ✅ SQL Server sử dụng BEGIN TRANSACTION thay vì BEGIN
+   * ⚠️ COMMIT và ROLLBACK có thể dùng đơn lẻ, nhưng dùng đầy đủ cho nhất quán
+   */
+  async beginTransaction(): Promise<Transaction> {
+    logger.info("Beginning SQL Server transaction (native API)", {
+      type: this.type,
+    });
+
+    this.ensureConnected();
+
+    try {
+      const sql = this.dbModule; // mssql module đã load trong connect()
+      const transaction = new sql.Transaction(this.pool);
+
+      // Bắt đầu transaction async
+      await new Promise<void>((resolve, reject) => {
+        transaction.begin((err: any) => {
+          if (err) {
+            logger.error("Failed to begin SQL Server transaction", {
+              error: err.message,
+            });
+            reject(err);
+          } else {
+            logger.trace("SQL Server transaction begun successfully");
+            resolve();
+          }
+        });
+      });
+
+      // Gán vào currentTransaction để scoping
+      this.currentTransaction = transaction;
+
+      let active = true;
+
+      const txObj: Transaction = {
+        commit: async () => {
+          if (!active) throw new Error("Transaction already completed");
+          active = false;
+
+          try {
+            await new Promise<void>((resolve, reject) => {
+              transaction.commit((err: any) => {
+                if (err) {
+                  logger.error("Failed to commit SQL Server transaction", {
+                    error: err.message,
+                  });
+                  reject(err);
+                } else {
+                  logger.info("SQL Server transaction committed successfully");
+                  resolve();
+                }
+              });
+            });
+          } finally {
+            // Clear scoping sau commit
+            this.currentTransaction = null;
+          }
+        },
+        rollback: async () => {
+          if (!active) throw new Error("Transaction already completed");
+          active = false;
+
+          try {
+            await new Promise<void>((resolve, reject) => {
+              transaction.rollback((err: any) => {
+                if (err) {
+                  logger.error("Failed to rollback SQL Server transaction", {
+                    error: err.message,
+                  });
+                  reject(err);
+                } else {
+                  logger.info(
+                    "SQL Server transaction rolled back successfully"
+                  );
+                }
+                resolve(); // Luôn resolve sau rollback để cleanup
+              });
+            });
+          } finally {
+            // Clear scoping sau rollback
+            this.currentTransaction = null;
+          }
+        },
+        isActive: () => active,
+      };
+
+      // Listen for auto-rollback (nếu config abortTransactionOnError: true)
+      transaction.on("rollback", (aborted: boolean) => {
+        if (aborted) {
+          logger.warn("SQL Server transaction auto-rolled back due to error");
+          this.currentTransaction = null;
+        }
+      });
+
+      return txObj;
+    } catch (error) {
+      logger.error("Error initializing SQL Server transaction", {
+        error: (error as Error).message,
+      });
+      throw error;
+    }
   }
 }

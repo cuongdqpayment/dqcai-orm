@@ -1,8 +1,4 @@
-Tạo Docker cho cơ sở dữ liệu **Oracle** phức tạp hơn đáng kể so với PostgreSQL, MySQL hay MariaDB vì Oracle không cung cấp các image chính thức trên Docker Hub theo cách tương tự.
-
-Thay vào đó, bạn cần sử dụng một **script của Oracle** để tự xây dựng (build) image Docker từ các file cài đặt (binaries) của Oracle Database mà bạn phải tải về trước.
-
-Dưới đây là hướng dẫn các bước bạn cần thực hiện:
+## Hướng dẫn tạo Docker cho cơ sở dữ liệu Oracle
 
 -----
 

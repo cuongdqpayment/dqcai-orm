@@ -737,9 +737,19 @@ export abstract class BaseService<TModel = any> {
           itemsCount: dataArray.length,
         });
 
-        await this.withTransaction(async () => {
-          await processBulkUpsert();
-        });
+        try {
+          await this.withTransaction(async () => {
+            await processBulkUpsert();
+          });
+        } catch (txError) {
+          logger.error("Transaction failed during bulk upsert", {
+            entityName: this.entityName,
+            error: (txError as Error).message,
+            stack: (txError as Error).stack,
+          });
+          // Không re-throw nếu muốn fallback to non-transactional, nhưng hiện tại giữ nguyên để fail-fast
+          throw txError;
+        }
       } else {
         logger.debug("Executing bulk upsert without transaction", {
           entityName: this.entityName,

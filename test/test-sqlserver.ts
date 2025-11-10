@@ -1,26 +1,28 @@
-// ./test/test-Claude-logger.ts
+// ./test/test-sqlserver.ts
+// script này chưa được kiểm chứng do chưa có database được tạo
 
-// ========== BƯỚC 4: SAU ĐÓ mới import SQLite library ==========
 import {
   ServiceManager,
   BaseService,
   DatabaseManager,
-  SQLiteAdapter,
-  SQLiteConfig,
   ForeignKeyInfo,
+  SQLServerConfig,
+  SQLServerAdapter,
 } from "../src/index";
 
 import { core as coreSchema } from "./coreSchema";
-
-import { schemas } from "./posSchemas";
-
-const dbConfig: SQLiteConfig = {
-  databaseType: "sqlite",
-  database: "core",
-  // For File uncomment line below
-  dbDirectory: "./temp/",
-  // For in-memory:
-  // memory: true,
+const dbConfig: SQLServerConfig = {
+  databaseType: "sqlserver",
+  database: "test",
+  server: "localhost",
+  port: 1433,
+  user: "admin",
+  password: "Admin@123",
+  options: {
+    encrypt: false,
+    trustServerCertificate: true,
+    enableArithAbort: true,
+  },
 };
 
 // ========== BƯỚC 1: Import logger utilities ==========
@@ -30,7 +32,7 @@ console.log("Initial config:", CommonLoggerConfig.getCurrentConfig());
 const logger = createModuleLogger(APPModules.TEST_ORM);
 
 // ========== BƯỚC 5: Verify config ==========
-console.log("After SQLite import:", CommonLoggerConfig.getCurrentConfig());
+console.log("After  import:", CommonLoggerConfig.getCurrentConfig());
 
 logger.trace("🔍 Test file started with trace level");
 
@@ -88,7 +90,9 @@ serviceManager.registerServices([
 async function verifyForeignKeys() {
   console.log("\n🔍 Verifying Foreign Keys...");
 
-  const adapter = DatabaseManager.getAdapterInstance("core") as SQLiteAdapter;
+  const adapter = DatabaseManager.getAdapterInstance(
+    "core"
+  ) as SQLServerAdapter;
 
   const tables = ["stores", "users", "user_sessions", "settings"];
 
@@ -113,7 +117,7 @@ async function verifyForeignKeys() {
 // ========== Main Function ==========
 async function main() {
   try {
-    logger.debug("📋 1.Registering CORE Schema...");
+    logger.debug("📋 1.Registering Schemas...");
     DatabaseManager.registerSchema("core", coreSchema);
 
     try {
@@ -123,22 +127,9 @@ async function main() {
         dbConfig, // cấu hình csdl có trường database_type sẽ cho biết dùng adapter nào
         validateVersion: true, // tạo bảng nếu version mới, hoặc mới khởi động chương trinhg
       });
-      console.log("✅ Schema core initialized");
-
-      logger.debug("📋 3.Registering Multi Schemas...");
-      DatabaseManager.registerSchemas(schemas);
-
-      logger.debug(
-        "🔧 4.Initializing all database with validateVersion=true...\n"
-      );
-      // đặt option validateVersion=true để tạo bảng dữ liệu cho shema tương ứng version
-      await DatabaseManager.initializeAll({
-        dbConfig, // cấu hình csdl có trường database_type sẽ cho biết dùng adapter nào
-        validateVersion: true, // tạo bảng nếu version mới, hoặc mới khởi động chương trinhg
-      });
-      console.log("✅ Schema allDatabase initialized");
+      console.log("✅ Schema initialized");
     } catch (error) {
-      console.error("❌ Failed to initialize schema:", error);
+      logger.error("❌ Failed to initialize schema:", (error as Error).message);
       throw error;
     }
 
@@ -286,8 +277,7 @@ async function main() {
     console.log(`   Stores: ${storeCount}`);
     console.log(`   Users: ${userCount}`);
   } catch (error) {
-    logger.error("❌ Test failed:", error);
-    console.error("❌ Error:", error);
+    console.error("❌ Test failed:", (error as Error).message);
   } finally {
     await DatabaseManager.closeAll();
     logger.info("✅ Database connections closed");

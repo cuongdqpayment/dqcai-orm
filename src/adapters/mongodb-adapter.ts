@@ -273,8 +273,8 @@ export class MongoDBAdapter extends BaseAdapter {
 
   async executeRaw(query: any, params?: any[]): Promise<any> {
     logger.trace("Executing raw MongoDB command", {
-      queryType: typeof query,
-      paramsCount: params?.length || 0,
+      query,
+      params,
     });
 
     if (!this.db) {

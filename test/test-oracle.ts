@@ -1,24 +1,21 @@
-// ./test/test-Claude-logger.ts
+// ./test/test-oracle.ts
+// script này chưa được kiểm chứng do chưa có csdl oracle được tạo
 
-// ========== BƯỚC 4: SAU ĐÓ mới import SQLite library ==========
 import {
   ServiceManager,
   BaseService,
   DatabaseManager,
-  MongoDBAdapter,
-  MongoDBConfig,
   ForeignKeyInfo,
+  OracleConfig,
+  OracleAdapter,
 } from "../src/index";
 
 import { core as coreSchema } from "./coreSchema";
-const dbConfig: MongoDBConfig = {
-  databaseType: "mongodb",
-  database: "core",
-  url: "mongodb://admin:Cng888xHome@127.0.0.1:27017/test?authSource=admin",
-  options: {
-    maxPoolSize: 10,
-    minPoolSize: 2,
-  },
+const dbConfig: OracleConfig = {
+  databaseType: "oracle",
+  user: "admin",
+  password: "Admin@123",
+  connectString: "localhost:1521/XEPDB1",
 };
 
 // ========== BƯỚC 1: Import logger utilities ==========
@@ -28,7 +25,7 @@ console.log("Initial config:", CommonLoggerConfig.getCurrentConfig());
 const logger = createModuleLogger(APPModules.TEST_ORM);
 
 // ========== BƯỚC 5: Verify config ==========
-console.log("After SQLite import:", CommonLoggerConfig.getCurrentConfig());
+console.log("After  import:", CommonLoggerConfig.getCurrentConfig());
 
 logger.trace("🔍 Test file started with trace level");
 
@@ -86,7 +83,7 @@ serviceManager.registerServices([
 async function verifyForeignKeys() {
   console.log("\n🔍 Verifying Foreign Keys...");
 
-  const adapter = DatabaseManager.getAdapterInstance("core") as MongoDBAdapter;
+  const adapter = DatabaseManager.getAdapterInstance("core") as OracleAdapter;
 
   const tables = ["stores", "users", "user_sessions", "settings"];
 
@@ -113,7 +110,7 @@ async function main() {
   try {
     logger.debug("📋 1.Registering Schemas...");
     DatabaseManager.registerSchema("core", coreSchema);
-    
+
     try {
       logger.debug("🔧 2.Initializing database with validateVersion=true...\n");
       // đặt option validateVersion=true để tạo bảng dữ liệu cho shema tương ứng version
@@ -123,7 +120,7 @@ async function main() {
       });
       console.log("✅ Schema initialized");
     } catch (error) {
-      console.error("❌ Failed to initialize schema:", error);
+      logger.error("❌ Failed to initialize schema:", (error as Error).message);
       throw error;
     }
 
@@ -271,8 +268,7 @@ async function main() {
     console.log(`   Stores: ${storeCount}`);
     console.log(`   Users: ${userCount}`);
   } catch (error) {
-    logger.error("❌ Test failed:", error);
-    console.error("❌ Error:", error);
+    console.error("❌ Test failed:", (error as Error).message);
   } finally {
     await DatabaseManager.closeAll();
     logger.info("✅ Database connections closed");

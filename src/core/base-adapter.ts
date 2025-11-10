@@ -194,7 +194,7 @@ export abstract class BaseAdapter implements IAdapter {
     schema: SchemaDefinition,
     foreignKeys?: ForeignKeyDefinition[]
   ): Promise<void> {
-    logger.trace("Creating table", { tableName, schema });
+    logger.trace("Creating table", { tableName });
 
     this.ensureConnected();
     const columns: string[] = [];
@@ -562,6 +562,10 @@ export abstract class BaseAdapter implements IAdapter {
   // 🔄 TRANSACTION MANAGEMENT
   // ==========================================
 
+  /**
+   * ⚠️ Derived adapters MUST override this for database-specific syntax
+   * (e.g., SQL Server needs "BEGIN TRANSACTION")
+   */
   async beginTransaction(): Promise<Transaction> {
     logger.info("Beginning transaction", { type: this.type });
 

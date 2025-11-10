@@ -17,6 +17,7 @@ import { MySQLConfig } from "@/types/database-config-types";
 import { QueryHelper } from "@/utils/query-helper";
 
 import { createModuleLogger, ORMModules } from "@/logger";
+
 const logger = createModuleLogger(ORMModules.MYSQL_ADAPTER);
 
 export class MySQLAdapter extends BaseAdapter {
@@ -152,7 +153,10 @@ export class MySQLAdapter extends BaseAdapter {
   protected sanitizeValue(value: any): any {
     logger.trace("Sanitizing value", {
       valueType: typeof value,
-      value: typeof value === "bigint" ? value.toString() : value,
+      isNull: value === null || value === undefined,
+      isBigInt: typeof value === "bigint",
+      isDate: value instanceof Date,
+      isBuffer: Buffer.isBuffer(value),
     });
 
     if (typeof value === "bigint") {
@@ -160,54 +164,27 @@ export class MySQLAdapter extends BaseAdapter {
       const MIN_SAFE_INTEGER = BigInt(Number.MIN_SAFE_INTEGER);
 
       if (value <= MAX_SAFE_INTEGER && value >= MIN_SAFE_INTEGER) {
-        const numericValue = Number(value);
-        logger.trace("Converted BigInt to Number", {
-          original: value.toString(),
-          converted: numericValue,
-        });
-        return numericValue;
+        return Number(value);
       } else {
-        const stringValue = value.toString();
-        logger.trace("Converted large BigInt to String", {
-          original: value.toString(),
-          converted: stringValue,
-        });
-        return stringValue;
+        return value.toString();
       }
     }
 
-    // Handle null/undefined
     if (value === null || value === undefined) {
-      logger.trace("Value is null/undefined, returning null");
       return null;
     }
 
-    // ✅ FIX 1: Handle Date objects → MySQL datetime format
     if (value instanceof Date) {
       const formattedDate = value.toISOString().slice(0, 19).replace("T", " ");
-      logger.trace("Converted Date object to MySQL datetime format", {
-        original: value.toISOString(),
-        formatted: formattedDate,
-      });
       return formattedDate;
     }
 
-    // Handle boolean → 1/0
     if (typeof value === "boolean") {
-      const numericValue = value ? 1 : 0;
-      logger.trace("Converted Boolean to numeric", {
-        original: value,
-        converted: numericValue,
-      });
-      return numericValue;
+      return value ? 1 : 0;
     }
 
-    // Handle arrays/objects → JSON stringify
     if (typeof value === "object" && !Buffer.isBuffer(value)) {
       const jsonString = JSON.stringify(value);
-      logger.trace("Converted object/array to JSON string", {
-        length: jsonString.length,
-      });
       return jsonString;
     }
 
@@ -220,21 +197,13 @@ export class MySQLAdapter extends BaseAdapter {
           .replace("T", " ")
           .replace(/\.\d{3}Z?$/, "")
           .replace("Z", "");
-
-        logger.trace("Converted ISO 8601 string to MySQL datetime format", {
-          original: value,
-          formatted: mysqlFormat,
-        });
-
         return mysqlFormat;
       }
 
       const escapedValue = value.replace(/'/g, "''");
-      logger.trace("Escaped string value");
       return escapedValue;
     }
 
-    logger.trace("Value is primitive, returning as-is");
     return value;
   }
 
@@ -352,42 +321,44 @@ export class MySQLAdapter extends BaseAdapter {
   // ==========================================
 
   async executeRaw(query: string, params?: any[]): Promise<any> {
-    logger.trace("Executing raw MySQL query", {
-      querySnippet:
-        query.substring(0, Math.min(100, query.length)) +
-        (query.length > 100 ? "..." : ""),
-      paramsCount: params?.length || 0,
-    });
+    logger.trace("Executing raw MySQL query", { query, params });
 
     if (!this.pool) {
       logger.error("Not connected to MySQL");
       throw new Error("Not connected to MySQL");
     }
 
-    const [rows, fields] = await this.pool.query(query, params);
+    try {
+      const [rows, fields] = await this.pool.query(query, params);
 
-    // Xử lý kết quả
-    if (Array.isArray(rows)) {
-      const result = {
-        rows,
-        rowCount: rows.length,
-        rowsAffected: rows.length,
-      };
-      logger.trace("SELECT query executed", { rowCount: rows.length });
-      return result;
-    } else {
-      // INSERT/UPDATE/DELETE result
-      const result = {
-        rows: [],
-        rowCount: (rows as any).affectedRows || 0,
-        rowsAffected: (rows as any).affectedRows || 0,
-        insertId: (rows as any).insertId,
-      };
-      logger.trace("Non-SELECT query executed", {
-        affectedRows: result.rowsAffected,
-        insertId: result.insertId,
+      // Xử lý kết quả
+      if (Array.isArray(rows)) {
+        const result = {
+          rows,
+          rowCount: rows.length,
+          rowsAffected: rows.length,
+        };
+        logger.trace("SELECT query executed", { result });
+        return result;
+      } else {
+        // INSERT/UPDATE/DELETE result
+        const result = {
+          rows: [],
+          rowCount: (rows as any).affectedRows || 0,
+          rowsAffected: (rows as any).affectedRows || 0,
+          insertId: (rows as any).insertId,
+        };
+        logger.trace("Non-SELECT query executed", { result });
+        return result;
+      }
+    } catch (error) {
+      // ✅ Safe error logging
+      logger.error("Query execution failed", {
+        query: query.substring(0, 200),
+        error: (error as Error).message,
+        code: (error as any).code,
       });
-      return result;
+      throw error;
     }
   }
 
@@ -563,18 +534,22 @@ export class MySQLAdapter extends BaseAdapter {
     this.ensureConnected();
 
     const query = `
-      SELECT
-        CONSTRAINT_NAME as constraint_name,
-        COLUMN_NAME as column_name,
-        REFERENCED_TABLE_NAME as referenced_table,
-        REFERENCED_COLUMN_NAME as referenced_column,
-        DELETE_RULE as delete_rule,
-        UPDATE_RULE as update_rule
-      FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
-      WHERE TABLE_SCHEMA = DATABASE()
-        AND TABLE_NAME = ?
-        AND REFERENCED_TABLE_NAME IS NOT NULL
-    `;
+    SELECT
+      kcu.CONSTRAINT_NAME as constraint_name,
+      kcu.COLUMN_NAME as column_name,
+      kcu.REFERENCED_TABLE_NAME as referenced_table,
+      kcu.REFERENCED_COLUMN_NAME as referenced_column,
+      rc.DELETE_RULE as delete_rule,
+      rc.UPDATE_RULE as update_rule
+    FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+    LEFT JOIN INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS rc
+      ON kcu.CONSTRAINT_NAME = rc.CONSTRAINT_NAME
+      AND kcu.CONSTRAINT_SCHEMA = rc.CONSTRAINT_SCHEMA
+    WHERE kcu.TABLE_SCHEMA = DATABASE()
+      AND kcu.TABLE_NAME = ?
+      AND kcu.REFERENCED_TABLE_NAME IS NOT NULL
+    ORDER BY kcu.ORDINAL_POSITION
+  `;
 
     const result = await this.executeRaw(query, [tableName]);
 
@@ -655,6 +630,7 @@ export class MySQLAdapter extends BaseAdapter {
     logger.debug("Inserting one record", {
       tableName,
       dataKeys: Object.keys(data),
+      keyCount: Object.keys(data).length,
     });
 
     this.ensureConnected();
@@ -676,7 +652,7 @@ export class MySQLAdapter extends BaseAdapter {
     logger.trace("Executing insert query", {
       tableName,
       keyCount: keys.length,
-      placeholderCount: placeholders.split(",").length,
+      query: query.substring(0, 200),
     });
 
     const result = await this.executeRaw(query, values);

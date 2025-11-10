@@ -8,7 +8,7 @@ services:
     # Đặt biến môi trường
     environment:
       # BẮT BUỘC: Đặt mật khẩu, phải đáp ứng các yêu cầu về độ phức tạp của Oracle
-      ORACLE_PWD: YourStrongPassword123
+      ORACLE_PWD: Admin@123
       # Tên PDB (Pluggable Database) mặc định
       ORACLE_PDB: ORCLPDB1 
       

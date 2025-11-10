@@ -74,89 +74,202 @@ export class MariaDBAdapter extends MySQLAdapter {
 
         // ✅ STEP 1: Check/create database with mariadb driver
         logger.trace("Checking if target database exists (mariadb driver)");
-        const checkPool = mariadb.createPool({
-          ...config,
-          database: undefined, // Connect without database
-        } as any);
 
         try {
-          const rows = await checkPool.query(
-            "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?",
-            [config.database]
+          const checkPool = mariadb.createPool({
+            ...config,
+            database: undefined, // Connect without database
+          } as any);
+
+          try {
+            const rows = await checkPool.query(
+              "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?",
+              [config.database]
+            );
+
+            if ((rows as any[]).length === 0) {
+              logger.info(
+                "Target database does not exist, attempting to create it",
+                {
+                  database: config.database,
+                }
+              );
+
+              try {
+                const safeDatabaseName = config.database?.replace(
+                  /[^a-zA-Z0-9_]/g,
+                  ""
+                );
+                await checkPool.query(
+                  `CREATE DATABASE \`${safeDatabaseName}\``
+                );
+                logger.info("Database created successfully", {
+                  database: config.database,
+                });
+              } catch (createError: any) {
+                // ✅ Xử lý lỗi không có quyền CREATE DATABASE
+                if (
+                  createError.code === "ER_DBACCESS_DENIED_ERROR" ||
+                  createError.message?.includes("Access denied")
+                ) {
+                  logger.warn(
+                    "Cannot create database (permission denied). Attempting direct connection...",
+                    {
+                      database: config.database,
+                      error: createError.message,
+                    }
+                  );
+                  // Tiếp tục thử kết nối trực tiếp - có thể database đã tồn tại
+                } else {
+                  throw createError; // Lỗi khác thì throw
+                }
+              }
+            } else {
+              logger.trace("Target database already exists", {
+                database: config.database,
+              });
+            }
+          } finally {
+            await checkPool.end();
+          }
+
+          // ✅ STEP 2: Connect to target database (regardless of creation success)
+          logger.trace("Creating MariaDB connection pool");
+          pool = mariadb.createPool(config);
+
+          // ✅ Verify connection by executing a simple query
+          try {
+            await pool.query("SELECT 1");
+            logger.trace("Connection verified successfully");
+          } catch (verifyError: any) {
+            await pool.end();
+            throw new Error(
+              `Cannot connect to database '${config.database}': ${verifyError.message}`
+            );
+          }
+
+          usingMariaDBDriver = true;
+        } catch (dbCheckError: any) {
+          // Nếu toàn bộ quá trình check/create thất bại
+          logger.warn(
+            "Database check/create failed, attempting direct connection",
+            {
+              error: dbCheckError.message,
+            }
           );
 
-          if ((rows as any[]).length === 0) {
-            logger.info("Target database does not exist, creating it", {
+          // ✅ Fallback: Thử kết nối trực tiếp tới database
+          try {
+            pool = mariadb.createPool(config);
+            await pool.query("SELECT 1"); // Verify
+            usingMariaDBDriver = true;
+            logger.info("Direct connection successful", {
               database: config.database,
             });
-
-            const safeDatabaseName = config.database?.replace(
-              /[^a-zA-Z0-9_]/g,
-              ""
+          } catch (directConnError: any) {
+            throw new Error(
+              `Cannot connect to database '${config.database}': ${directConnError.message}`
             );
-            await checkPool.query(`CREATE DATABASE \`${safeDatabaseName}\``);
-
-            logger.info("Database created successfully", {
-              database: config.database,
-            });
-          } else {
-            logger.trace("Target database already exists", {
-              database: config.database,
-            });
           }
-        } finally {
-          await checkPool.end();
         }
-
-        // ✅ STEP 2: Connect to target database
-        logger.trace("Creating MariaDB connection pool");
-        pool = mariadb.createPool(config);
-        usingMariaDBDriver = true;
-      } catch {
+      } catch (mariadbError) {
         logger.debug("MariaDB module not available, falling back to mysql2");
         logger.trace("Dynamically importing 'mysql2/promise' module");
         const mysql = await import("mysql2/promise");
 
-        // ✅ STEP 1: Check/create database with mysql2 driver
-        logger.trace("Checking if target database exists (mysql2 driver)");
-        const checkPool = mysql.createPool({
-          ...config,
-          database: undefined,
-        } as any);
-
         try {
-          const [rows] = await checkPool.query(
-            "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?",
-            [config.database]
+          const checkPool = mysql.createPool({
+            ...config,
+            database: undefined,
+          } as any);
+
+          try {
+            const [rows] = await checkPool.query(
+              "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?",
+              [config.database]
+            );
+
+            if ((rows as any[]).length === 0) {
+              logger.info(
+                "Target database does not exist, attempting to create it",
+                {
+                  database: config.database,
+                }
+              );
+
+              try {
+                const safeDatabaseName = config.database?.replace(
+                  /[^a-zA-Z0-9_]/g,
+                  ""
+                );
+                await checkPool.query(
+                  `CREATE DATABASE IF NOT EXISTS \`${safeDatabaseName}\``
+                );
+                logger.info("Database created successfully", {
+                  database: config.database,
+                });
+              } catch (createError: any) {
+                if (
+                  createError.code === "ER_DBACCESS_DENIED_ERROR" ||
+                  createError.message?.includes("Access denied")
+                ) {
+                  logger.warn(
+                    "Cannot create database (permission denied). Attempting direct connection...",
+                    {
+                      database: config.database,
+                    }
+                  );
+                } else {
+                  throw createError;
+                }
+              }
+            } else {
+              logger.trace("Target database already exists", {
+                database: config.database,
+              });
+            }
+          } finally {
+            await checkPool.end();
+          }
+
+          // ✅ STEP 2: Connect to target database
+          logger.trace("Creating MySQL2 connection pool as fallback");
+          pool = mysql.createPool(config as any);
+
+          // Verify connection
+          try {
+            await pool.query("SELECT 1");
+            logger.trace("Connection verified successfully");
+          } catch (verifyError: any) {
+            await pool.end();
+            throw new Error(
+              `Cannot connect to database '${config.database}': ${verifyError.message}`
+            );
+          }
+
+          usingMariaDBDriver = false;
+        } catch (dbCheckError: any) {
+          // Fallback: Direct connection
+          logger.warn(
+            "Database check/create failed, attempting direct connection",
+            {
+              error: dbCheckError.message,
+            }
           );
 
-          if ((rows as any[]).length === 0) {
-            logger.info("Target database does not exist, creating it", {
+          try {
+            pool = mysql.createPool(config as any);
+            await pool.query("SELECT 1");
+            usingMariaDBDriver = false;
+            logger.info("Direct connection successful", {
               database: config.database,
             });
-
-            const safeDatabaseName = config.database?.replace(
-              /[^a-zA-Z0-9_]/g,
-              ""
+          } catch (directConnError: any) {
+            throw new Error(
+              `Cannot connect to database '${config.database}': ${directConnError.message}`
             );
-            await checkPool.query(`CREATE DATABASE \`${safeDatabaseName}\``);
-
-            logger.info("Database created successfully", {
-              database: config.database,
-            });
-          } else {
-            logger.trace("Target database already exists", {
-              database: config.database,
-            });
           }
-        } finally {
-          await checkPool.end();
         }
-
-        // ✅ STEP 2: Connect to target database
-        logger.trace("Creating MySQL2 connection pool as fallback");
-        pool = mysql.createPool(config as any);
-        usingMariaDBDriver = false;
       }
 
       logger.trace("Creating IConnection object");
@@ -198,17 +311,7 @@ export class MariaDBAdapter extends MySQLAdapter {
   // ✅ OVERRIDE: executeRaw() - Handle MariaDB driver differences
   // ==========================================
   async executeRaw(query: string, params?: any[]): Promise<any> {
-    const sanitizedParamsForLogging = params?.map((p) =>
-      typeof p === "bigint" ? p.toString() : p
-    );
-
-    logger.trace("Executing raw MariaDB query", {
-      querySnippet:
-        query.substring(0, Math.min(100, query.length)) +
-        (query.length > 100 ? "..." : ""),
-      paramsCount: params?.length || 0,
-      params: sanitizedParamsForLogging,
-    });
+    logger.trace("Executing raw MariaDB query", { query, params });
 
     if (!this.pool) {
       logger.error("Not connected to MariaDB");
@@ -225,60 +328,62 @@ export class MariaDBAdapter extends MySQLAdapter {
     });
 
     const usingMariaDBDriver = (this as any)._usingMariaDBDriver;
+    try {
+      if (usingMariaDBDriver) {
+        // Use sanitized params
+        const result = await this.pool.query(query, sanitizedParams);
 
-    if (usingMariaDBDriver) {
-      // Use sanitized params
-      const result = await this.pool.query(query, sanitizedParams);
-
-      if (Array.isArray(result)) {
-        const resultData = {
-          rows: result,
-          rowCount: result.length,
-          rowsAffected: result.length,
-        };
-        logger.trace("SELECT query executed (MariaDB driver)", {
-          rowCount: result.length,
-        });
-        return resultData;
+        if (Array.isArray(result)) {
+          const resultData = {
+            rows: result,
+            rowCount: result.length,
+            rowsAffected: result.length,
+          };
+          logger.trace("SELECT query executed (MariaDB driver)", {
+            resultData,
+          });
+          return resultData;
+        } else {
+          const resultData = {
+            rows: [],
+            rowCount: result.affectedRows || 0,
+            rowsAffected: result.affectedRows || 0,
+            insertId: result.insertId,
+          };
+          logger.trace("Non-SELECT query executed (MariaDB driver)", {
+            resultData,
+          });
+          return resultData;
+        }
       } else {
-        const resultData = {
-          rows: [],
-          rowCount: result.affectedRows || 0,
-          rowsAffected: result.affectedRows || 0,
-          insertId: result.insertId,
-        };
-        logger.trace("Non-SELECT query executed (MariaDB driver)", {
-          affectedRows: result.affectedRows,
-          insertId: result.insertId,
-        });
-        return resultData;
-      }
-    } else {
-      const [rows, fields] = await this.pool.query(query, sanitizedParams);
+        const [rows, fields] = await this.pool.query(query, sanitizedParams);
 
-      if (Array.isArray(rows)) {
-        const result = {
-          rows,
-          rowCount: rows.length,
-          rowsAffected: rows.length,
-        };
-        logger.trace("SELECT query executed (MySQL2 driver)", {
-          rowCount: rows.length,
-        });
-        return result;
-      } else {
-        const result = {
-          rows: [],
-          rowCount: (rows as any).affectedRows || 0,
-          rowsAffected: (rows as any).affectedRows || 0,
-          insertId: (rows as any).insertId,
-        };
-        logger.trace("Non-SELECT query executed (MySQL2 driver)", {
-          affectedRows: result.rowsAffected,
-          insertId: result.insertId,
-        });
-        return result;
+        if (Array.isArray(rows)) {
+          const result = {
+            rows,
+            rowCount: rows.length,
+            rowsAffected: rows.length,
+          };
+          logger.trace("SELECT query executed (MySQL2 driver)", { result });
+          return result;
+        } else {
+          const result = {
+            rows: [],
+            rowCount: (rows as any).affectedRows || 0,
+            rowsAffected: (rows as any).affectedRows || 0,
+            insertId: (rows as any).insertId,
+          };
+          logger.trace("Non-SELECT query executed (MySQL2 driver)", { result });
+          return result;
+        }
       }
+    } catch (error) {
+      logger.error("Query execution failed", {
+        query: query.substring(0, 200),
+        error: (error as Error).message,
+        code: (error as any).code,
+      });
+      throw error;
     }
   }
 }

@@ -1,32 +1,97 @@
 # version: '3.8'
 
 services:
-  # Tên dịch vụ
+  # ============================================
+  # MongoDB Database Service
+  # ============================================
   mongodb-db:
     # Sử dụng image MongoDB chính thức mới nhất
     image: mongo:latest
-    
+    container_name: mongodb-dev
+
     # Đặt biến môi trường
     environment:
       # Tùy chọn: Tên người dùng quản trị
-      MONGO_INITDB_ROOT_USERNAME: mongo_admin
+      MONGO_INITDB_ROOT_USERNAME: root
       # Tùy chọn: Mật khẩu người dùng quản trị (BẮT BUỘC cho môi trường sản xuất)
-      MONGO_INITDB_ROOT_PASSWORD: YourStrongPassword!123 
+      MONGO_INITDB_ROOT_PASSWORD: Root$123
       # Tùy chọn: Tên database sẽ được tạo tự động khi khởi tạo
-      MONGO_INITDB_DATABASE: my_sample_db
-      
+      MONGO_INITDB_DATABASE: test
+
     # Ánh xạ cổng (Mặc định MongoDB là 27017)
     ports:
       - "27017:27017"
-      
+
     # Thiết lập Volume để lưu trữ dữ liệu bền vững
     volumes:
       # Thư mục dữ liệu mặc định của MongoDB trong container
       - mongodb_data:/data/db
-      
+      # ✅ Mount init script (sẽ chạy tự động khi container khởi động lần đầu)
+      - ./init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
+
     # Đảm bảo container chạy lại sau khi khởi động lại Docker Desktop
     restart: always
 
-# Định nghĩa Managed Volume
+    # ✅ Health check with authentication
+    healthcheck:
+      test: |
+        mongosh --quiet --eval "
+          try {
+            db.adminCommand('ping')
+            print('healthy')
+          } catch(e) {
+            print('unhealthy')
+            quit(1)
+          }
+        " || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+    # ✅ Add to network
+    networks:
+      - mongodb-network
+
+  # DỊch vụ web quản trị MongoDB qua port 8081
+  mongo-express:
+    image: mongo-express:1.0.0
+    container_name: mongo-express-rpi
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      # ✅ MongoDB connection with root credentials
+      ME_CONFIG_MONGODB_ADMINUSERNAME: root
+      ME_CONFIG_MONGODB_ADMINPASSWORD: Root$123
+      # ✅ Fix hostname to match service name
+      ME_CONFIG_MONGODB_SERVER: mongodb-db
+      ME_CONFIG_MONGODB_PORT: 27017
+      ME_CONFIG_MONGODB_URL: mongodb://root:Root$123@mongodb-db:27017/
+
+      # ✅ Web interface authentication
+      ME_CONFIG_BASICAUTH_USERNAME: webadmin
+      ME_CONFIG_BASICAUTH_PASSWORD: Web@123
+
+      # ✅ Optional: Additional settings
+      ME_CONFIG_SITE_BASEURL: /
+      ME_CONFIG_SITE_COOKIESECRET: supersecret
+      ME_CONFIG_SITE_SESSIONSECRET: supersecret
+
+    depends_on:
+      mongodb-db:
+        condition: service_healthy
+
+    networks:
+      - mongodb-network
+
+# Định nghĩa volumes để lưu trữ dữ liệu
 volumes:
   mongodb_data:
+    driver: local
+  mongodb_config:
+    driver: local
+
+networks:
+  mongodb-network:
+    driver: bridge

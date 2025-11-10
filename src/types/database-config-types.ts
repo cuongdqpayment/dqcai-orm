@@ -216,6 +216,7 @@ export interface MariaDBConfig extends DbConfig {
 
   /** Enable compression (default: false) */
   compress?: boolean;
+  // autoCreateDatabase?: boolean; // Default: true
 }
 
 /**
@@ -707,6 +708,9 @@ export interface SQLServerConfig extends DbConfig {
 
   /** Before connect callback */
   beforeConnect?: (conn: any) => void | Promise<void>;
+
+  /** để SQL Server tự động rollback nếu query bên trong fail. */
+  abortTransactionOnError: boolean;
 }
 
 /**

@@ -5,27 +5,30 @@ services:
   mysql-db:
     # Sử dụng image MySQL chính thức
     image: mysql:8.0
-    
+
     # Đặt biến môi trường
     environment:
       # BẮT BUỘC: Đặt mật khẩu root
-      MYSQL_ROOT_PASSWORD: Cng3500888@
+      MYSQL_ROOT_PASSWORD: Root@123
       # Tùy chọn: Tên database sẽ được tạo tự động
       MYSQL_DATABASE: test
       # Tùy chọn: Tên người dùng sẽ được tạo tự động
-      MYSQL_USER: cuongdq
+      MYSQL_USER: test
       # Tùy chọn: Mật khẩu cho người dùng trên
-      MYSQL_PASSWORD: Cng3500888@
-      
+      MYSQL_PASSWORD: Test@123
+
     # Ánh xạ cổng (Mặc định MySQL là 3306)
     ports:
       - "3306:3306"
-      
+
     # Thiết lập Volume để lưu trữ dữ liệu bền vững
     volumes:
       # Lưu ý: Thư mục dữ liệu của MySQL là /var/lib/mysql
       - mysql_data:/var/lib/mysql
-      
+      # Chạy script để tạo user Admin có toàn quyền tạo cơ sở dữ liệu dùng cho thư viện
+      # Không dùng user root để thực hiện mà chỉ dùng user admin để thao tác với thư viện
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+
     # Khởi động lại container nếu có lỗi
     restart: always
 

@@ -4,28 +4,31 @@ services:
   # Tên dịch vụ
   mariadb-db:
     # Sử dụng image MariaDB chính thức
-    image: mariadb:latest 
-    
+    image: mariadb:latest
+
     # Đặt biến môi trường
     environment:
       # BẮT BUỘC: Đặt mật khẩu root
-      MARIADB_ROOT_PASSWORD: Cng3500888@
+      MARIADB_ROOT_PASSWORD: Root@123
       # Tùy chọn: Tên database sẽ được tạo tự động
       MARIADB_DATABASE: test
       # Tùy chọn: Tên người dùng sẽ được tạo tự động
-      MARIADB_USER: cuongdq
+      MARIADB_USER: test
       # Tùy chọn: Mật khẩu cho người dùng trên
-      MARIADB_PASSWORD: Cng3500888@
-      
+      MARIADB_PASSWORD: Test@123
+
     # Ánh xạ cổng (Mặc định MariaDB/MySQL là 3306)
     ports:
       - "3307:3306"
-      
+
     # Thiết lập Volume để lưu trữ dữ liệu bền vững
     volumes:
       # Lưu ý: Thư mục dữ liệu của MariaDB cũng là /var/lib/mysql
       - mariadb_data:/var/lib/mysql/mariadb
-      
+      # Chạy script để tạo user Admin có toàn quyền tạo cơ sở dữ liệu dùng cho thư viện
+      # Không dùng user root để thực hiện mà chỉ dùng user admin để thao tác với thư viện
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+
     # Khởi động lại container nếu có lỗi
     restart: always
 
