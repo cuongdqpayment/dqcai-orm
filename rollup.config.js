@@ -32,11 +32,11 @@ const plugins = [
     rootDir: "src",
     noEmitHelpers: true,
     importHelpers: false,
-    target: "ES2017",
+    target: "es2020",
   }),
   esbuild({
     minify: true,
-    target: "es2017",
+    target: "es2020",
     charset: "utf8",
     legalComments: "none",
   }),
