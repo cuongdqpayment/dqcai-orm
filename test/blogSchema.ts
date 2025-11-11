@@ -1,0 +1,1165 @@
+import { DatabaseSchema } from "@dqcai/orm";
+
+// ========================
+// CORE DATABASE SCHEMA
+// ========================
+
+export const coreSchema: DatabaseSchema = {
+  version: "1.0",
+  database_name: "core",
+  description:
+    "Cơ sở dữ liệu hệ thống cốt lõi quản lý toàn bộ hoạt động của doanh nghiệp",
+  schemas: {
+    enterprises: {
+      description: "Bảng quản lý thông tin các doanh nghiệp trong hệ thống",
+      cols: [
+        {
+          name: "id",
+          type: "uuid",
+          primaryKey: true,
+          required: true,
+          description: "Mã định danh duy nhất của doanh nghiệp",
+        },
+        {
+          name: "name",
+          type: "varchar",
+          length: 255,
+          required: true,
+          description: "Tên chính thức của doanh nghiệp",
+        },
+        {
+          name: "business_type",
+          type: "varchar",
+          length: 100,
+          enum: [
+            "ltd",
+            "joint_stock",
+            "private",
+            "partnership",
+            "sole_proprietorship",
+          ],
+          description: "Loại hình kinh doanh",
+        },
+        {
+          name: "industries",
+          type: "json",
+          description: "Các ngành nghề kinh doanh",
+        },
+        {
+          name: "address",
+          type: "string",
+          description: "Địa chỉ trụ sở chính",
+        },
+        {
+          name: "tax_code",
+          type: "varchar",
+          length: 20,
+          unique: true,
+          index: true,
+          description: "Mã số thuế",
+        },
+        {
+          name: "phone",
+          type: "varchar",
+          length: 20,
+          description: "Số điện thoại liên hệ",
+        },
+        {
+          name: "email",
+          type: "email",
+          unique: true,
+          index: true,
+          description: "Email chính",
+        },
+        {
+          name: "website",
+          type: "url",
+          description: "Website chính thức",
+        },
+        {
+          name: "logo_url",
+          type: "url",
+          description: "Đường dẫn logo",
+        },
+        {
+          name: "status",
+          type: "varchar",
+          length: 20,
+          default: "active",
+          enum: ["active", "inactive", "suspended", "pending"],
+          description: "Trạng thái hoạt động",
+        },
+        {
+          name: "subscription_plan",
+          type: "varchar",
+          length: 20,
+          default: "basic",
+          enum: ["basic", "premium", "enterprise"],
+          description: "Gói dịch vụ đang sử dụng",
+        },
+        {
+          name: "created_at",
+          type: "timestamp",
+          default: "CURRENT_TIMESTAMP",
+          description: "Thời gian tạo bản ghi",
+        },
+        {
+          name: "updated_at",
+          type: "timestamp",
+          default: "CURRENT_TIMESTAMP",
+          description: "Thời gian cập nhật bản ghi lần cuối",
+        },
+      ],
+      indexes: [
+        {
+          name: "idx_enterprises_tax_code",
+          fields: ["tax_code"],
+          unique: true,
+          description: "Index duy nhất cho mã số thuế",
+        },
+        {
+          name: "idx_enterprises_email",
+          fields: ["email"],
+          unique: true,
+          description: "Index duy nhất cho email",
+        },
+        {
+          name: "idx_enterprises_status_plan",
+          fields: ["status", "subscription_plan"],
+          description: "Index composite cho trạng thái và gói dịch vụ",
+        },
+        {
+          name: "idx_enterprises_created_at",
+          fields: ["created_at"],
+          description: "Index cho thời gian tạo",
+        },
+      ],
+    },
+
+    stores: {
+      description: "Bảng quản lý thông tin các cửa hàng/chi nhánh",
+      cols: [
+        {
+          name: "id",
+          type: "uuid",
+          primaryKey: true,
+          required: true,
+          description: "Mã định danh duy nhất của cửa hàng",
+        },
+        {
+          name: "enterprise_id",
+          type: "uuid",
+          required: true,
+          index: true,
+          description: "Mã doanh nghiệp sở hữu",
+        },
+        {
+          name: "name",
+          type: "varchar",
+          length: 255,
+          required: true,
+          description: "Tên cửa hàng/chi nhánh",
+        },
+        {
+          name: "store_type",
+          type: "varchar",
+          length: 50,
+          enum: ["retail", "warehouse", "showroom", "factory", "office"],
+          description: "Loại cửa hàng",
+        },
+        {
+          name: "address",
+          type: "string",
+          description: "Địa chỉ cửa hàng",
+        },
+        {
+          name: "phone",
+          type: "varchar",
+          length: 20,
+          description: "Số điện thoại cửa hàng",
+        },
+        {
+          name: "email",
+          type: "email",
+          description: "Email liên hệ",
+        },
+        {
+          name: "manager_name",
+          type: "varchar",
+          length: 100,
+          description: "Tên quản lý cửa hàng",
+        },
+        {
+          name: "operating_hours",
+          type: "json",
+          description: "Giờ hoạt động (JSON format)",
+        },
+        {
+          name: "timezone",
+          type: "varchar",
+          length: 50,
+          default: "Asia/Ho_Chi_Minh",
+          description: "Múi giờ",
+        },
+        {
+          name: "currency",
+          type: "varchar",
+          length: 3,
+          default: "VND",
+          description: "Đơn vị tiền tệ (ISO 4217)",
+        },
+        {
+          name: "tax_rate",
+          type: "decimal",
+          precision: 5,
+          scale: 2,
+          default: 0,
+          description: "Tỷ lệ thuế (%)",
+        },
+        {
+          name: "status",
+          type: "varchar",
+          length: 20,
+          default: "active",
+          enum: ["active", "inactive", "maintenance", "closed"],
+          description: "Trạng thái hoạt động",
+        },
+        {
+          name: "sync_enabled",
+          type: "boolean",
+          default: true,
+          description: "Cho phép đồng bộ dữ liệu",
+        },
+        {
+          name: "last_sync",
+          type: "timestamp",
+          nullable: true,
+          description: "Thời gian đồng bộ dữ liệu lần cuối",
+        },
+        {
+          name: "created_at",
+          type: "timestamp",
+          default: "CURRENT_TIMESTAMP",
+          description: "Thời gian tạo bản ghi",
+        },
+        {
+          name: "updated_at",
+          type: "timestamp",
+          default: "CURRENT_TIMESTAMP",
+          description: "Thời gian cập nhật bản ghi lần cuối",
+        },
+      ],
+      indexes: [
+        {
+          name: "idx_stores_enterprise_id",
+          fields: ["enterprise_id"],
+          description: "Index cho enterprise_id",
+        },
+        {
+          name: "idx_stores_status",
+          fields: ["status"],
+          description: "Index cho trạng thái",
+        },
+        {
+          name: "idx_stores_enterprise_status",
+          fields: ["enterprise_id", "status"],
+          description: "Index composite",
+        },
+      ],
+      foreign_keys: [
+        {
+          name: "fk_stores_enterprise_id",
+          fields: ["enterprise_id"],
+          references: {
+            table: "enterprises",
+            fields: ["id"],
+          },
+          on_delete: "CASCADE",
+          on_update: "CASCADE",
+          description: "Liên kết với bảng enterprises",
+        },
+      ],
+    },
+
+    users: {
+      description: "Bảng quản lý thông tin người dùng hệ thống",
+      cols: [
+        {
+          name: "id",
+          type: "uuid",
+          primaryKey: true,
+          required: true,
+          description: "Mã định danh duy nhất của người dùng",
+        },
+        {
+          name: "store_id",
+          type: "uuid",
+          required: true,
+          index: true,
+          description: "Mã cửa hàng",
+        },
+        {
+          name: "username",
+          type: "varchar",
+          length: 50,
+          required: true,
+          unique: true,
+          index: true,
+          description: "Tên đăng nhập",
+        },
+        {
+          name: "password_hash",
+          type: "varchar",
+          length: 255,
+          required: true,
+          description: "Mật khẩu đã mã hóa",
+        },
+        {
+          name: "full_name",
+          type: "varchar",
+          length: 100,
+          required: true,
+          description: "Họ và tên đầy đủ",
+        },
+        {
+          name: "email",
+          type: "email",
+          unique: true,
+          index: true,
+          nullable: true,
+          description: "Email người dùng",
+        },
+        {
+          name: "phone",
+          type: "varchar",
+          length: 20,
+          nullable: true,
+          description: "Số điện thoại",
+        },
+        {
+          name: "role",
+          type: "varchar",
+          length: 20,
+          required: true,
+          default: "staff",
+          enum: ["admin", "manager", "staff", "cashier", "viewer"],
+          index: true,
+          description: "Vai trò trong hệ thống",
+        },
+        {
+          name: "permissions",
+          type: "json",
+          nullable: true,
+          description: "Quyền hạn chi tiết (JSON format)",
+        },
+        {
+          name: "avatar_url",
+          type: "url",
+          nullable: true,
+          description: "Đường dẫn ảnh đại diện",
+        },
+        {
+          name: "is_active",
+          type: "boolean",
+          default: true,
+          description: "Trạng thái tài khoản",
+        },
+        {
+          name: "last_login",
+          type: "timestamp",
+          nullable: true,
+          description: "Thời gian đăng nhập lần cuối",
+        },
+        {
+          name: "failed_login_attempts",
+          type: "integer",
+          default: 0,
+          description: "Số lần đăng nhập thất bại liên tiếp",
+        },
+        {
+          name: "locked_until",
+          type: "timestamp",
+          nullable: true,
+          description: "Thời gian khóa tài khoản đến",
+        },
+        {
+          name: "created_at",
+          type: "timestamp",
+          default: "CURRENT_TIMESTAMP",
+          description: "Thời gian tạo tài khoản",
+        },
+        {
+          name: "updated_at",
+          type: "timestamp",
+          default: "CURRENT_TIMESTAMP",
+          description: "Thời gian cập nhật thông tin lần cuối",
+        },
+      ],
+      indexes: [
+        {
+          name: "idx_users_username",
+          fields: ["username"],
+          unique: true,
+          description: "Index duy nhất cho tên đăng nhập",
+        },
+        {
+          name: "idx_users_email",
+          fields: ["email"],
+          unique: true,
+          description: "Index duy nhất cho email",
+        },
+        {
+          name: "idx_users_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+        {
+          name: "idx_users_store_role",
+          fields: ["store_id", "role"],
+          description: "Index composite cho cửa hàng và vai trò",
+        },
+        {
+          name: "idx_users_active_status",
+          fields: ["is_active"],
+          description: "Index cho trạng thái hoạt động",
+        },
+      ],
+      foreign_keys: [
+        {
+          name: "fk_users_store_id",
+          fields: ["store_id"],
+          references: {
+            table: "stores",
+            fields: ["id"],
+          },
+          on_delete: "CASCADE",
+          on_update: "CASCADE",
+          description: "Liên kết với bảng stores",
+        },
+      ],
+    },
+
+    user_sessions: {
+      description: "Bảng quản lý phiên đăng nhập",
+      cols: [
+        {
+          name: "id",
+          type: "uuid",
+          primaryKey: true,
+          required: true,
+          description: "Mã định danh duy nhất của phiên đăng nhập",
+        },
+        {
+          name: "user_id",
+          type: "uuid",
+          required: true,
+          index: true,
+          description: "Mã người dùng",
+        },
+        {
+          name: "store_id",
+          type: "uuid",
+          required: true,
+          index: true,
+          description: "Mã cửa hàng",
+        },
+        {
+          name: "session_token",
+          type: "varchar",
+          length: 255,
+          required: true,
+          unique: true,
+          index: true,
+          description: "Token phiên đăng nhập duy nhất",
+        },
+        {
+          name: "refresh_token",
+          type: "varchar",
+          length: 255,
+          nullable: true,
+          description: "Token làm mới phiên",
+        },
+        {
+          name: "device_info",
+          type: "json",
+          nullable: true,
+          description: "Thông tin thiết bị (JSON)",
+        },
+        {
+          name: "ip_address",
+          type: "varchar",
+          length: 45,
+          nullable: true,
+          description: "Địa chỉ IP (hỗ trợ IPv6)",
+        },
+        {
+          name: "user_agent",
+          type: "string",
+          nullable: true,
+          description: "Thông tin trình duyệt",
+        },
+        {
+          name: "login_time",
+          type: "timestamp",
+          default: "CURRENT_TIMESTAMP",
+          description: "Thời gian bắt đầu phiên",
+        },
+        {
+          name: "logout_time",
+          type: "timestamp",
+          nullable: true,
+          description: "Thời gian kết thúc phiên",
+        },
+        {
+          name: "expires_at",
+          type: "timestamp",
+          nullable: true,
+          index: true,
+          description: "Thời gian hết hạn phiên",
+        },
+        {
+          name: "is_active",
+          type: "boolean",
+          default: true,
+          description: "Trạng thái phiên",
+        },
+      ],
+      indexes: [
+        {
+          name: "idx_sessions_user_id",
+          fields: ["user_id"],
+          description: "Index cho user_id",
+        },
+        {
+          name: "idx_sessions_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+        {
+          name: "idx_sessions_token",
+          fields: ["session_token"],
+          unique: true,
+          description: "Index duy nhất cho session token",
+        },
+        {
+          name: "idx_sessions_active",
+          fields: ["is_active"],
+          description: "Index cho phiên đang hoạt động",
+        },
+        {
+          name: "idx_sessions_expires_at",
+          fields: ["expires_at"],
+          description: "Index cho thời gian hết hạn",
+        },
+      ],
+      foreign_keys: [
+        {
+          name: "fk_sessions_user_id",
+          fields: ["user_id"],
+          references: {
+            table: "users",
+            fields: ["id"],
+          },
+          on_delete: "CASCADE",
+          on_update: "CASCADE",
+          description: "Liên kết với bảng users",
+        },
+        {
+          name: "fk_sessions_store_id",
+          fields: ["store_id"],
+          references: {
+            table: "stores",
+            fields: ["id"],
+          },
+          on_delete: "CASCADE",
+          on_update: "CASCADE",
+          description: "Liên kết với bảng stores",
+        },
+      ],
+    },
+
+    settings: {
+      description: "Bảng lưu trữ các cấu hình và thiết lập",
+      cols: [
+        {
+          name: "id",
+          type: "integer",
+          primaryKey: true,
+          autoIncrement: true,
+          description: "Mã định danh duy nhất của thiết lập",
+        },
+        {
+          name: "store_id",
+          type: "uuid",
+          nullable: true,
+          index: true,
+          description: "Mã cửa hàng áp dụng thiết lập này",
+        },
+        {
+          name: "category",
+          type: "varchar",
+          length: 50,
+          required: true,
+          enum: [
+            "system",
+            "payment",
+            "notification",
+            "display",
+            "security",
+            "integration",
+          ],
+          index: true,
+          description: "Danh mục thiết lập",
+        },
+        {
+          name: "key",
+          type: "varchar",
+          length: 100,
+          required: true,
+          description: "Khóa định danh",
+        },
+        {
+          name: "value",
+          type: "string",
+          nullable: true,
+          description: "Giá trị của thiết lập",
+        },
+        {
+          name: "default_value",
+          type: "string",
+          nullable: true,
+          description: "Giá trị mặc định",
+        },
+        {
+          name: "description",
+          type: "string",
+          nullable: true,
+          description: "Mô tả chi tiết",
+        },
+        {
+          name: "data_type",
+          type: "varchar",
+          length: 20,
+          default: "string",
+          enum: ["string", "number", "boolean", "json", "array"],
+          description: "Kiểu dữ liệu",
+        },
+        {
+          name: "validation_rules",
+          type: "json",
+          nullable: true,
+          description: "Quy tắc validation (JSON)",
+        },
+        {
+          name: "is_encrypted",
+          type: "boolean",
+          default: false,
+          description: "Giá trị có được mã hóa không",
+        },
+        {
+          name: "is_system",
+          type: "boolean",
+          default: false,
+          description: "Thiết lập hệ thống (không được phép xóa)",
+        },
+        {
+          name: "created_at",
+          type: "timestamp",
+          default: "CURRENT_TIMESTAMP",
+          description: "Thời gian tạo thiết lập",
+        },
+        {
+          name: "updated_at",
+          type: "timestamp",
+          default: "CURRENT_TIMESTAMP",
+          description: "Thời gian cập nhật thiết lập lần cuối",
+        },
+      ],
+      indexes: [
+        {
+          name: "idx_settings_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+        {
+          name: "idx_settings_category",
+          fields: ["category"],
+          description: "Index cho category",
+        },
+        {
+          name: "idx_settings_store_category_key",
+          fields: ["store_id", "category", "key"],
+          unique: true,
+          description: "Index composite duy nhất",
+        },
+      ],
+      foreign_keys: [
+        {
+          name: "fk_settings_store_id",
+          fields: ["store_id"],
+          references: {
+            table: "stores",
+            fields: ["id"],
+          },
+          on_delete: "SET NULL",
+          on_update: "CASCADE",
+          description: "Liên kết với bảng stores",
+        },
+      ],
+    },
+  },
+};
+
+// ========================
+// BLOG DATABASE SCHEMA
+// ========================
+
+export const blogSchema: DatabaseSchema = {
+  version: "1.0",
+  database_name: "blog_content",
+  description:
+    "Cơ sở dữ liệu lưu trữ nội dung, thống kê, cảm xúc và bình luận cho hệ thống blog",
+  schemas: {
+    articles: {
+      description: "Bảng lưu trữ thông tin và nội dung của các bài viết",
+      cols: [
+        {
+          name: "id",
+          type: "uuid",
+          primaryKey: true,
+          required: true,
+          description: "Mã định danh duy nhất của bài viết",
+        },
+        {
+          name: "store_id",
+          type: "uuid",
+          required: true,
+          index: true,
+          description: "Mã định danh của cửa hàng",
+        },
+        {
+          name: "title",
+          type: "string",
+          required: true,
+          description: "Tiêu đề của bài viết, tối ưu cho SEO (<60 ký tự)",
+        },
+        {
+          name: "slug",
+          type: "string",
+          required: true,
+          unique: true,
+          index: true,
+          description: "URL thân thiện của bài viết",
+        },
+        {
+          name: "image",
+          type: "url",
+          nullable: true,
+          description: "URL hình ảnh đại diện của bài viết",
+        },
+        {
+          name: "image_alt",
+          type: "string",
+          nullable: true,
+          description: "Văn bản thay thế (alt text) cho hình ảnh",
+        },
+        {
+          name: "description",
+          type: "string",
+          nullable: true,
+          description: "Mô tả meta của bài viết (<160 ký tự)",
+        },
+        {
+          name: "excerpt",
+          type: "string",
+          nullable: true,
+          description: "Đoạn trích ngắn của bài viết",
+        },
+        {
+          name: "author",
+          type: "string",
+          required: true,
+          description: "Tác giả của bài viết",
+        },
+        {
+          name: "status",
+          type: "string",
+          enum: ["draft", "published", "archived"],
+          required: true,
+          index: true,
+          description: "Trạng thái xuất bản của bài viết",
+        },
+        {
+          name: "tags",
+          type: "array",
+          nullable: true,
+          description: "Danh sách các từ khóa liên quan đến bài viết",
+        },
+        {
+          name: "category",
+          type: "string",
+          nullable: true,
+          index: true,
+          description: "Chuyên mục của bài viết",
+        },
+        {
+          name: "content",
+          type: "string",
+          required: true,
+          description: "Toàn bộ nội dung bài viết",
+        },
+        {
+          name: "seo_keywords",
+          type: "string",
+          nullable: true,
+          description: "Các từ khóa SEO chính",
+        },
+        {
+          name: "canonical_url",
+          type: "url",
+          nullable: true,
+          description: "URL chính thức của bài viết",
+        },
+        {
+          name: "og_title",
+          type: "string",
+          nullable: true,
+          description: "Tiêu đề Open Graph",
+        },
+        {
+          name: "og_description",
+          type: "string",
+          nullable: true,
+          description: "Mô tả Open Graph",
+        },
+        {
+          name: "og_image",
+          type: "url",
+          nullable: true,
+          description: "URL hình ảnh Open Graph",
+        },
+        {
+          name: "featured_image",
+          type: "url",
+          nullable: true,
+          description: "URL hình ảnh nổi bật của bài viết",
+        },
+        {
+          name: "google_map",
+          type: "string",
+          nullable: true,
+          description: "Mã nhúng hoặc URL của Google Map",
+        },
+        {
+          name: "map_title",
+          type: "string",
+          nullable: true,
+          description: "Tiêu đề hoặc mô tả cho Google Map",
+        },
+        {
+          name: "youtube",
+          type: "string",
+          nullable: true,
+          description: "URL hoặc mã video YouTube",
+        },
+        {
+          name: "youtube_title",
+          type: "string",
+          nullable: true,
+          description: "Tiêu đề hoặc mô tả cho video YouTube",
+        },
+        {
+          name: "is_hidden",
+          type: "boolean",
+          default: false,
+          required: true,
+          description: "Trạng thái ẩn bài viết",
+        },
+        {
+          name: "is_comments_locked",
+          type: "boolean",
+          default: false,
+          required: true,
+          description: "Trạng thái khóa bình luận",
+        },
+        {
+          name: "created_at",
+          type: "timestamp",
+          required: true,
+          index: true,
+          default: "CURRENT_TIMESTAMP",
+          description: "Thời gian tạo bài viết",
+        },
+        {
+          name: "updated_at",
+          type: "timestamp",
+          required: true,
+          default: "CURRENT_TIMESTAMP",
+          description: "Thời gian cập nhật gần nhất của bài viết",
+        },
+        {
+          name: "published_at",
+          type: "timestamp",
+          nullable: true,
+          description: "Thời gian bài viết được xuất bản",
+        },
+      ],
+      indexes: [
+        {
+          name: "idx_articles_slug",
+          fields: ["slug"],
+          unique: true,
+          description: "Index duy nhất cho slug",
+        },
+        {
+          name: "idx_articles_status",
+          fields: ["status"],
+          description: "Index cho trạng thái",
+        },
+        {
+          name: "idx_articles_created_at",
+          fields: ["created_at"],
+          description: "Index cho thời gian tạo",
+        },
+        {
+          name: "idx_articles_store_id",
+          fields: ["store_id"],
+          description: "Index cho store_id",
+        },
+        {
+          name: "idx_articles_category",
+          fields: ["category"],
+          description: "Index cho chuyên mục",
+        },
+      ],
+    },
+
+    article_metrics: {
+      description: "Bảng thống kê lượt xem và người đọc duy nhất của mỗi bài viết",
+      cols: [
+        {
+          name: "id",
+          type: "uuid",
+          primaryKey: true,
+          required: true,
+          description: "Mã định danh duy nhất của tài liệu thống kê",
+        },
+        {
+          name: "article_id",
+          type: "uuid",
+          required: true,
+          unique: true,
+          index: true,
+          description: "Mã định danh của bài viết được thống kê",
+        },
+        {
+          name: "total_views",
+          type: "integer",
+          default: 0,
+          required: true,
+          description: "Tổng số lượt xem của bài viết",
+        },
+        {
+          name: "unique_views",
+          type: "integer",
+          default: 0,
+          required: true,
+          description: "Số lượt xem duy nhất của bài viết",
+        },
+        {
+          name: "last_viewed_at",
+          type: "timestamp",
+          nullable: true,
+          description: "Thời gian lượt xem gần nhất",
+        },
+        {
+          name: "device_fingerprints",
+          type: "array",
+          nullable: true,
+          description: "Mảng lưu trữ các dấu vân tay thiết bị",
+        },
+      ],
+      indexes: [
+        {
+          name: "idx_metrics_article_id",
+          fields: ["article_id"],
+          unique: true,
+          description: "Index duy nhất cho article_id",
+        },
+      ],
+      foreign_keys: [
+        {
+          name: "fk_metrics_article_id",
+          fields: ["article_id"],
+          references: {
+            table: "articles",
+            fields: ["id"],
+          },
+          on_delete: "CASCADE",
+          description: "Liên kết với bảng articles",
+        },
+      ],
+    },
+
+    article_comments: {
+      description: "Bảng lưu trữ bình luận của người đọc trên các bài viết",
+      cols: [
+        {
+          name: "id",
+          type: "uuid",
+          primaryKey: true,
+          required: true,
+          description: "Mã định danh duy nhất của bình luận",
+        },
+        {
+          name: "article_id",
+          type: "uuid",
+          required: true,
+          index: true,
+          description: "Mã định danh của bài viết được bình luận",
+        },
+        {
+          name: "parent_id",
+          type: "uuid",
+          nullable: true,
+          index: true,
+          description: "Mã định danh của bình luận gốc (nếu là bình luận con)",
+        },
+        {
+          name: "author_name",
+          type: "string",
+          required: true,
+          description: "Tên người bình luận",
+        },
+        {
+          name: "author_email",
+          type: "email",
+          nullable: true,
+          description: "Email người bình luận",
+        },
+        {
+          name: "content",
+          type: "string",
+          required: true,
+          description: "Nội dung của bình luận",
+        },
+        {
+          name: "created_at",
+          type: "timestamp",
+          required: true,
+          default: "CURRENT_TIMESTAMP",
+          description: "Thời gian bình luận",
+        },
+        {
+          name: "status",
+          type: "string",
+          enum: ["pending", "approved", "rejected"],
+          default: "pending",
+          required: true,
+          description: "Trạng thái duyệt bình luận",
+        },
+      ],
+      indexes: [
+        {
+          name: "idx_comments_article_id",
+          fields: ["article_id"],
+          description: "Index cho article_id",
+        },
+        {
+          name: "idx_comments_parent_id",
+          fields: ["parent_id"],
+          description: "Index cho parent_id",
+        },
+      ],
+      foreign_keys: [
+        {
+          name: "fk_comments_article_id",
+          fields: ["article_id"],
+          references: {
+            table: "articles",
+            fields: ["id"],
+          },
+          on_delete: "CASCADE",
+          description: "Liên kết với bảng articles",
+        },
+      ],
+    },
+
+    article_reactions: {
+      description: "Bảng lưu trữ thông tin cảm xúc (reactions) của người đọc",
+      cols: [
+        {
+          name: "id",
+          type: "uuid",
+          primaryKey: true,
+          required: true,
+          description: "Mã định danh duy nhất của reaction",
+        },
+        {
+          name: "article_id",
+          type: "uuid",
+          required: true,
+          index: true,
+          description: "Mã định danh của bài viết được tương tác",
+        },
+        {
+          name: "reaction_type",
+          type: "string",
+          enum: ["like", "love", "haha", "wow", "sad", "angry"],
+          required: true,
+          description: "Loại cảm xúc của người đọc",
+        },
+        {
+          name: "user_id",
+          type: "uuid",
+          nullable: true,
+          description: "Mã định danh người dùng (nếu có)",
+        },
+        {
+          name: "fingerprint",
+          type: "string",
+          nullable: true,
+          description: "Dấu vân tay thiết bị để cho phép like duy nhất",
+        },
+        {
+          name: "ip_address",
+          type: "string",
+          nullable: true,
+          description: "Địa chỉ IP của người dùng để ngăn chặn spam",
+        },
+        {
+          name: "created_at",
+          type: "timestamp",
+          required: true,
+          default: "CURRENT_TIMESTAMP",
+          description: "Thời gian tạo reaction",
+        },
+      ],
+      indexes: [
+        {
+          name: "idx_reactions_article_id",
+          fields: ["article_id"],
+          description: "Index cho article_id",
+        },
+      ],
+      foreign_keys: [
+        {
+          name: "fk_reactions_article_id",
+          fields: ["article_id"],
+          references: {
+            table: "articles",
+            fields: ["id"],
+          },
+          on_delete: "CASCADE",
+          description: "Liên kết với bảng articles",
+        },
+      ],
+    },
+  },
+};
+
+// Export all schemas
+export const schemas = {
+  core: coreSchema,
+  blog: blogSchema,
+}

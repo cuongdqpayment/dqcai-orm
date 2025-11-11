@@ -1,4 +1,4 @@
-import { DatabaseSchema, CommonFields } from "../src/index";
+import { DatabaseSchema, CommonFields } from "@dqcai/orm";
 
 // ========================
 // CORE DATABASE SCHEMA
@@ -119,12 +119,6 @@ const core: DatabaseSchema = {
           required: true,
           index: true,
           description: "Mã doanh nghiệp sở hữu",
-          //   references: {
-          //     table: "enterprises",
-          //     fields: ["id"],
-          //     on_delete: "CASCADE",
-          //     on_update: "CASCADE",
-          //   },
         },
         {
           name: "name",
@@ -484,8 +478,8 @@ const core: DatabaseSchema = {
             table: "stores",
             fields: ["id"],
           },
-          on_delete: "CASCADE",
-          on_update: "CASCADE",
+          on_delete: "NO ACTION",
+          on_update: "NO ACTION",
           description: "Liên kết với bảng stores",
         },
       ],
@@ -586,8 +580,8 @@ const core: DatabaseSchema = {
             table: "stores",
             fields: ["id"],
           },
-          on_delete: "CASCADE",
-          on_update: "CASCADE",
+          on_delete: "SET NULL", // ✅ Set null thay vì cascade
+          on_update: "SET NULL",
           description: "Liên kết với bảng stores",
         },
       ],
@@ -2178,8 +2172,8 @@ const inventory: DatabaseSchema = {
             table: "product_variants",
             fields: ["id"],
           },
-          on_delete: "CASCADE",
-          on_update: "CASCADE",
+          on_delete: "SET NULL",
+          on_update: "SET NULL",
           description: "Liên kết biến thể",
         },
       ],
@@ -2454,8 +2448,8 @@ const inventory: DatabaseSchema = {
             table: "inventory",
             fields: ["id"],
           },
-          on_delete: "CASCADE",
-          on_update: "CASCADE",
+          on_delete: "SET NULL",
+          on_update: "SET NULL",
           description: "Liên kết tồn kho",
         },
       ],
@@ -2633,8 +2627,8 @@ const inventory: DatabaseSchema = {
             table: "inventory",
             fields: ["id"],
           },
-          on_delete: "CASCADE",
-          on_update: "CASCADE",
+          on_delete: "SET NULL",
+          on_update: "SET NULL",
           description: "Liên kết tồn kho",
         },
       ],
