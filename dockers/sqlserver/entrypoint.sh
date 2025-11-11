@@ -1,5 +1,5 @@
 #!/bin/bash
-set -euo pipefail
+set -e
 
 log() {
     echo "[$(date +'%Y-%m-%d %H:%M:%S')] $*"
@@ -7,14 +7,15 @@ log() {
 
 wait_for_sqlserver() {
     log "⏳ Waiting for SQL Server to be ready..."
-    local max_attempts=60
-    local attempt=0
+    max_attempts=60
+    attempt=0
     
     while [ $attempt -lt $max_attempts ]; do
         if /opt/mssql-tools18/bin/sqlcmd \
             -S localhost \
             -U sa \
             -P "${SA_PASSWORD}" \
+            -C \
             -Q "SELECT 1" \
             -b \
             > /dev/null 2>&1; then
@@ -34,10 +35,9 @@ wait_for_sqlserver() {
 }
 
 run_init_script() {
-    local script_file="/docker-entrypoint-initdb.d/init-db.sql"
-    local flag_file="/var/opt/mssql/.initialized"
+    script_file="/docker-entrypoint-initdb.d/init-db.sql"
+    flag_file="/var/opt/mssql/.initialized"
     
-    # Kiểm tra đã init chưa
     if [ -f "$flag_file" ]; then
         log "✅ Already initialized (skip)"
         return 0
@@ -50,17 +50,16 @@ run_init_script() {
     
     log "📝 Running init script..."
     
-    # Chạy script với error handling tốt hơn
     if /opt/mssql-tools18/bin/sqlcmd \
         -S localhost \
         -U sa \
         -P "${SA_PASSWORD}" \
+        -C \
         -i "$script_file" \
         -e \
         -b \
         2>&1 | tee /tmp/init-db.log; then
         
-        # Tạo flag file CHỈ KHI THÀNH CÔNG
         touch "$flag_file"
         log "✅ Init script completed!"
         return 0
@@ -71,10 +70,6 @@ run_init_script() {
     fi
 }
 
-# ============================================
-# MAIN
-# ============================================
-
 log "========================================="
 log "🚀 Starting SQL Server..."
 log "========================================="
@@ -84,24 +79,20 @@ log "  • Version: 2022"
 log "  • Product: ${MSSQL_PID}"
 log "  • Memory: ${MSSQL_MEMORY_LIMIT_MB:-unlimited} MB"
 
-# Start SQL Server trong background
 log "Starting SQL Server in background..."
 /opt/mssql/bin/sqlservr &
 SQLSERVER_PID=$!
 log "SQL Server PID: $SQLSERVER_PID"
 
-# Đợi SQL Server ready
 if ! wait_for_sqlserver; then
     log "❌ Cannot start SQL Server!"
     exit 1
 fi
 
-# Chạy init script
 if ! run_init_script; then
     log "❌ Init failed, but SQL Server continues..."
 fi
 
-# Log connection info
 log "========================================="
 log "✅ SQL Server is READY!"
 log "========================================="
@@ -114,7 +105,6 @@ log ""
 log "💡 Press Ctrl+C to stop"
 log "========================================="
 
-# Keep container running
 wait $SQLSERVER_PID
 log "SQL Server stopped. Container exiting..."
 exit 0

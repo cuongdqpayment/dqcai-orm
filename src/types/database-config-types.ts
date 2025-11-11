@@ -710,7 +710,7 @@ export interface SQLServerConfig extends DbConfig {
   beforeConnect?: (conn: any) => void | Promise<void>;
 
   /** để SQL Server tự động rollback nếu query bên trong fail. */
-  abortTransactionOnError: boolean;
+  abortTransactionOnError?: boolean;
 }
 
 /**

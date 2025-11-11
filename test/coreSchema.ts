@@ -483,12 +483,6 @@ const core: DatabaseSchema = {
           required: true,
           index: true,
           description: "Mã người dùng",
-        //   references: {
-        //     table: "users",
-        //     fields: ["id"],
-        //     on_delete: "CASCADE",
-        //     on_update: "CASCADE",
-        //   },
         },
         {
           name: "store_id",
@@ -496,12 +490,6 @@ const core: DatabaseSchema = {
           required: true,
           index: true,
           description: "Mã cửa hàng",
-        //   references: {
-        //     table: "stores",
-        //     fields: ["id"],
-        //     on_delete: "CASCADE",
-        //     on_update: "CASCADE",
-        //   },
         },
         {
           name: "session_token",

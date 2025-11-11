@@ -1,187 +1,40 @@
-# version: '3.8'
-# Không cần khai báo version nữa (deprecated từ Docker Compose v1.27.0+)
-
 services:
-  # ============================================
-  # Tên dịch vụ: sqlserver-db
-  # Đây là tên service được dùng trong docker-compose
-  # Có thể tham chiếu bởi các service khác qua tên này
-  # ============================================
   sqlserver-db:
-    # ============================================
-    # Image: SQL Server 2022 Developer Edition
-    # mcr.microsoft.com = Microsoft Container Registry
-    # mssql/server = Repository name
-    # 2022-latest = Tag version
-    # ============================================
     image: mcr.microsoft.com/mssql/server:2022-latest
-    
-    # ============================================
-    # Container name: Tên container khi chạy
-    # Giúp dễ dàng identify container khi dùng docker commands
-    # ============================================
     container_name: sqlserver-dev
-    
-    # ============================================
-    # Hostname: Tên hostname bên trong container
-    # Hữu ích khi cần reference từ các container khác
-    # ============================================
     hostname: sqlserver-host
     
-    # ============================================
-    # Environment variables
-    # Các biến môi trường cấu hình SQL Server
-    # ============================================
     environment:
-      # ACCEPT_EULA=Y: Chấp nhận End-User License Agreement
-      # BẮT BUỘC để SQL Server container có thể start
       ACCEPT_EULA: "Y"
-      
-      # SA_PASSWORD: Mật khẩu cho SA (System Administrator) user
-      # Yêu cầu: Ít nhất 8 ký tự, bao gồm chữ hoa, chữ thường, số, ký tự đặc biệt
-      # SA là superuser mặc định của SQL Server
       SA_PASSWORD: "Root@123"
-      
-      # MSSQL_PID: Product ID - Phiên bản SQL Server
-      # Developer: Free, đầy đủ tính năng, chỉ dùng cho dev/test
-      # Express: Free, giới hạn tính năng
-      # Standard/Enterprise: Yêu cầu license key
       MSSQL_PID: "Developer"
-      
-      # MSSQL_COLLATION: Bộ mã sắp xếp và so sánh ký tự
-      # SQL_Latin1_General_CP1_CI_AS:
-      #   - Latin1_General: Bộ ký tự Latin
-      #   - CP1: Code Page 1
-      #   - CI: Case Insensitive (không phân biệt hoa thường)
-      #   - AS: Accent Sensitive (phân biệt dấu)
       MSSQL_COLLATION: "SQL_Latin1_General_CP1_CI_AS"
-      
-      # MSSQL_LCID: Locale ID - Ngôn ngữ và khu vực
-      # 1033 = English (United States)
-      # 1066 = Vietnamese
       MSSQL_LCID: 1033
-      
-      # MSSQL_MEMORY_LIMIT_MB: Giới hạn memory SQL Server sử dụng
-      # 2048 = 2GB RAM
-      # Mặc định SQL Server sẽ dùng tối đa 80% RAM hệ thống
       MSSQL_MEMORY_LIMIT_MB: 2048
-      
-    # ============================================
-    # Port mapping: host_port:container_port
-    # 1433 là port mặc định của SQL Server
-    # Map port 1433 của host -> port 1433 của container
-    # Có thể đổi thành "1434:1433" nếu port 1433 đã được dùng
-    # ============================================
+    
     ports:
       - "1433:1433"
       
-    # ============================================
-    # Volumes: Persistent storage
-    # ============================================
     volumes:
-      # Data volume: Lưu trữ database files
-      # sqlserver_data = named volume (managed by Docker)
-      # /var/opt/mssql = thư mục data mặc định của SQL Server trong Linux container
-      # Bao gồm: data files (.mdf), log files (.ldf), system databases
       - sqlserver_data:/var/opt/mssql
-      
-      # Init SQL script: Script khởi tạo database
-      # ./init-db.sql = file SQL trong thư mục hiện tại
-      # /docker-entrypoint-initdb.d/ = thư mục init scripts
-      # :ro = read-only mount (bảo vệ file không bị ghi đè)
       - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
-      
-      # Entrypoint script: Script thực thi init-db.sql
-      # Cần thiết vì SQL Server container không tự động chạy .sql files
-      # script này dùng lệnh /opt/mssql-tools18/bin/sqlcmd để thực thi (nhớ là tools18 nhé)
-      # - ./entrypoint.sh:/usr/local/bin/entrypoint.sh:ro
+      - ./entrypoint.sh:/usr/local/bin/entrypoint.sh:ro
     
-    # ============================================
-    # User: Chạy container với user cụ thể
-    # mssql = user mặc định trong SQL Server container
-    # Không nên chạy với root để bảo mật
-    # ============================================
-    user: mssql
+    # QUAN TRỌNG: Không dùng user: mssql khi chạy custom entrypoint
+    # user: mssql
     
-    # ============================================
-    # Command: Override default command
-    # Chạy entrypoint.sh thay vì command mặc định
-    # Script này sẽ:
-    #   1. Start SQL Server
-    #   2. Đợi SQL Server ready
-    #   3. Chạy init-db.sql
-    # ============================================
-    # command: /bin/bash /usr/local/bin/entrypoint.sh
+    # Kích hoạt custom entrypoint script
+    command: /bin/bash /usr/local/bin/entrypoint.sh
     
-    # ============================================
-    # Restart policy
-    # always = luôn restart container khi:
-    #   - Container bị crash
-    #   - Docker daemon restart
-    #   - Server reboot
-    # Alternatives: "no", "on-failure", "unless-stopped"
-    # ============================================
     restart: always
     
-    # ============================================
-    # Health check: Kiểm tra container có healthy không
-    # ============================================
-    # healthcheck:
-    #   # Test command: Chạy lệnh kiểm tra
-    #   # sqlcmd: SQL Server command-line tool
-    #   # -S localhost: Connect tới localhost
-    #   # -U sa: Sử dụng SA user
-    #   # -P: Mật khẩu SA
-    #   # -Q: Query để thực thi
-    #   # SELECT 1: Query đơn giản nhất để test connection
-    #   test: >
-    #     /opt/mssql-tools18/bin/sqlcmd 
-    #     -S localhost 
-    #     -U sa 
-    #     -P "Root@123" 
-    #     -Q "SELECT 1" 
-    #     || exit 1
-      
-    #   # interval: Khoảng thời gian giữa các lần check (10 giây)
-    #   interval: 10s
-      
-    #   # timeout: Thời gian tối đa cho mỗi lần check (5 giây)
-    #   timeout: 5s
-      
-    #   # retries: Số lần thử lại trước khi đánh dấu unhealthy (5 lần)
-    #   retries: 5
-      
-    #   # start_period: Thời gian chờ ban đầu trước khi bắt đầu check
-    #   # SQL Server cần ~30-40s để khởi động lần đầu
-    #   start_period: 40s
-    
-    # ============================================
-    # Networks: Container sẽ join vào network nào
-    # Nếu không khai báo, sẽ dùng default network
-    # ============================================
     networks:
       - sqlserver-network
 
-# ============================================
-# Volumes Definition
-# Khai báo các named volumes
-# ============================================
 volumes:
-  # sqlserver_data: Volume lưu trữ database files
-  # driver: local = lưu trữ trên disk của host machine
-  # Docker sẽ tự động tạo và quản lý volume này
-  # Location (Linux): /var/lib/docker/volumes/sqlserver_data
-  # Location (Windows): C:\ProgramData\Docker\volumes\sqlserver_data
   sqlserver_data:
     driver: local
 
-# ============================================
-# Networks Definition
-# Khai báo custom networks
-# ============================================
 networks:
-  # sqlserver-network: Network riêng cho SQL Server
-  # driver: bridge = default network driver
-  # Cho phép containers trong cùng network giao tiếp với nhau
   sqlserver-network:
     driver: bridge

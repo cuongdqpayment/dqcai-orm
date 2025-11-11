@@ -254,12 +254,6 @@ const core: DatabaseSchema = {
           required: true,
           index: true,
           description: "Mã cửa hàng",
-          //   references: {
-          //     table: "stores",
-          //     fields: ["id"],
-          //     on_delete: "CASCADE",
-          //     on_update: "CASCADE",
-          //   },
         },
         {
           name: "username",
@@ -387,12 +381,6 @@ const core: DatabaseSchema = {
           required: true,
           index: true,
           description: "Mã người dùng",
-          //   references: {
-          //     table: "users",
-          //     fields: ["id"],
-          //     on_delete: "CASCADE",
-          //     on_update: "CASCADE",
-          //   },
         },
         {
           name: "store_id",
@@ -400,12 +388,6 @@ const core: DatabaseSchema = {
           required: true,
           index: true,
           description: "Mã cửa hàng",
-          //   references: {
-          //     table: "stores",
-          //     fields: ["id"],
-          //     on_delete: "CASCADE",
-          //     on_update: "CASCADE",
-          //   },
         },
         {
           name: "session_token",
@@ -628,7 +610,7 @@ const oms: DatabaseSchema = {
         { ...CommonFields.id.uuid },
         {
           name: "user_id",
-          type: "integer",
+          type: "uuid",
           nullable: true,
           description: "Định danh người dùng tạo đơn",
         },
@@ -2275,7 +2257,7 @@ const inventory: DatabaseSchema = {
         },
         {
           name: "user_id",
-          type: "integer",
+          type: "uuid",
           nullable: true,
           description: "Người thực hiện",
         },
@@ -2346,7 +2328,7 @@ const inventory: DatabaseSchema = {
         },
         {
           name: "user_id",
-          type: "integer",
+          type: "uuid",
           nullable: true,
           description: "Người tạo",
         },
@@ -2984,7 +2966,7 @@ const scm: DatabaseSchema = {
         },
         {
           name: "user_id",
-          type: "integer",
+          type: "uuid",
           nullable: true,
           description: "Người tạo đơn",
         },
@@ -3652,7 +3634,7 @@ const analytics: DatabaseSchema = {
         { ...CommonFields.storeId },
         {
           name: "user_id",
-          type: "integer",
+          type: "uuid",
           nullable: true,
           description: "Người tạo báo cáo",
         },
@@ -3745,7 +3727,7 @@ const analytics: DatabaseSchema = {
         },
         {
           name: "user_id",
-          type: "integer",
+          type: "uuid",
           nullable: true,
           index: true,
           description: "Người thực hiện",
