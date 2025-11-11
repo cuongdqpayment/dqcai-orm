@@ -40,15 +40,10 @@ export class MongoDBAdapter extends BaseAdapter {
     super(config);
   }
 
-  /**
-   *
-   * @returns
-   */
   isSupported(): boolean {
     if (this.dbModule !== null) {
       return true;
     }
-    // Nếu đã connect → supported
     if (this.db || this.isConnected()) {
       return true;
     }
@@ -68,9 +63,10 @@ export class MongoDBAdapter extends BaseAdapter {
 
   async connect(schemaKey?: string): Promise<IConnection> {
     if (!this.dbConfig) throw Error("No database configuration provided.");
+    this.dbName = schemaKey || this.dbConfig.database || "default";
     const config = {
       ...this.dbConfig,
-      database: schemaKey || this.dbConfig.database,
+      database: this.dbName,
     } as MongoDBConfig;
 
     logger.debug("Connecting to MongoDB", {

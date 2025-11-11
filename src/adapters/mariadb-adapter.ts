@@ -52,9 +52,10 @@ export class MariaDBAdapter extends MySQLAdapter {
 
   async connect(schemaKey?: string): Promise<IConnection> {
     if (!this.dbConfig) throw Error("No database configuration provided.");
+    this.dbName = schemaKey || this.dbConfig.database || "default";
     const config = {
       ...this.dbConfig,
-      database: schemaKey || this.dbConfig.database,
+      database: this.dbName,
     } as MariaDBConfig;
 
     logger.debug("Connecting to MariaDB", {

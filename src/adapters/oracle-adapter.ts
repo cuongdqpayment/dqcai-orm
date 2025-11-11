@@ -29,9 +29,6 @@ export class OracleAdapter extends BaseAdapter {
     super(config);
   }
 
-  /*
-  Chuyển 2 hàm isSupported và connect về luôn Adapter, không cần tạo connection nữa
-  */
   isSupported(): boolean {
     if (this.dbModule !== null) {
       return true;
@@ -57,9 +54,10 @@ export class OracleAdapter extends BaseAdapter {
 
   async connect(schemaKey?: string): Promise<IConnection> {
     if (!this.dbConfig) throw Error("No database configuration provided.");
+    this.dbName = schemaKey || this.dbConfig.database || "default";
     const config = {
       ...this.dbConfig,
-      database: schemaKey || this.dbConfig.database,
+      database: this.dbName,
     } as OracleConfig;
 
     logger.debug("Connecting to Oracle", {

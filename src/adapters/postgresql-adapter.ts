@@ -53,9 +53,10 @@ export class PostgreSQLAdapter extends BaseAdapter {
 
   async connect(schemaKey?: string): Promise<IConnection> {
     if (!this.dbConfig) throw Error("No database configuration provided.");
+    this.dbName = schemaKey || this.dbConfig.database || "default";
     const config = {
       ...this.dbConfig,
-      database: schemaKey || this.dbConfig.database, // ưu tiên lấy database thuộc schemaConfig
+      database: this.dbName,
     } as PostgreSQLConfig;
 
     logger.debug("Connecting to PostgreSQL", {

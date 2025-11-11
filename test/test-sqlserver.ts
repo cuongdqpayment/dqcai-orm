@@ -24,7 +24,7 @@ const dbConfig: SQLServerConfig = {
     trustServerCertificate: true,
     enableArithAbort: true,
   },
-  abortTransactionOnError: false
+  abortTransactionOnError: false,
 };
 
 // ========== Logger Setup ==========
@@ -185,25 +185,65 @@ class PaymentConfigService extends BaseService {
 async function verifyForeignKeys(schemaName: string, tables: string[]) {
   console.log(`\n🔍 Verifying Foreign Keys for ${schemaName.toUpperCase()}...`);
 
-  const adapter = DatabaseManager.getAdapterInstance(
-    schemaName
-  ) as BaseAdapter;
-
-  for (const table of tables) {
-    const fks = await adapter.getForeignKeys(table);
-
-    console.log(`\n📋 ${table}:`);
-    if (fks.length === 0) {
-      console.log("  ❌ No foreign keys found");
-    } else {
-      fks.forEach((fk: ForeignKeyInfo) => {
-        console.log(`  ✅ ${fk.constraintName}:`);
-        console.log(
-          `     ${fk.columnName} -> ${fk.referencedTable}.${fk.referencedColumn}`
-        );
-        console.log(`     ON DELETE ${fk.onDelete} | ON UPDATE ${fk.onUpdate}`);
-      });
+  try {
+    // ✅ Lấy DAO thay vì adapter trực tiếp
+    const dao = DatabaseManager.getCachedDAO(schemaName);
+    if (!dao) {
+      console.log(`⚠️  No cached DAO found for schema: ${schemaName}`);
+      return;
     }
+
+    const adapter = dao.getAdapter() as BaseAdapter;
+
+    // ✅ Verify adapter is still connected
+    if (!adapter.isConnected()) {
+      console.log(`⚠️  Adapter not connected for schema: ${schemaName}`);
+      console.log(`    Attempting to reconnect...`);
+
+      // Thử reconnect
+      try {
+        await dao.connect();
+        console.log(`    ✅ Reconnected successfully`);
+      } catch (error) {
+        console.log(`    ❌ Reconnection failed: ${(error as Error).message}`);
+        return;
+      }
+    }
+
+    // ✅ Health check nếu có
+    if (typeof adapter.healthCheck === "function") {
+      const isHealthy = await adapter.healthCheck();
+      if (!isHealthy) {
+        console.log(`⚠️  Health check failed for schema: ${schemaName}`);
+        return;
+      }
+    }
+
+    for (const table of tables) {
+      try {
+        const fks = await adapter.getForeignKeys(table);
+
+        console.log(`\n📋 ${table}:`);
+        if (fks.length === 0) {
+          console.log("  ℹ️  No foreign keys defined");
+        } else {
+          fks.forEach((fk: ForeignKeyInfo) => {
+            console.log(`  ✅ ${fk.constraintName}:`);
+            console.log(
+              `     ${fk.columnName} -> ${fk.referencedTable}.${fk.referencedColumn}`
+            );
+            console.log(
+              `     ON DELETE ${fk.onDelete} | ON UPDATE ${fk.onUpdate}`
+            );
+          });
+        }
+      } catch (error) {
+        console.log(`  ❌ Error getting foreign keys for ${table}:`);
+        console.log(`     ${(error as Error).message}`);
+      }
+    }
+  } catch (error) {
+    console.log(`❌ Error in verifyForeignKeys: ${(error as Error).message}`);
   }
 }
 

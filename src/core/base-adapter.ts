@@ -27,10 +27,19 @@ const logger = createModuleLogger(ORMModules.BASE_ADAPTER);
 export abstract class BaseAdapter implements IAdapter {
   protected dbModule: any = null;
   protected require: NodeRequire;
+  protected dbName: string;
 
   protected dbConfig: DbConfig;
+
+  /**
+   * Các adapter riêng lẻ sẽ đưa cấu hình đặc biệt của chúng vào
+   * Trong đó tham số chính là dbName sẽ được quản lý riêng khi gọi connect()
+   * sẽ được tự động gán lại dbName là Adapter phục vụ cho một dbName
+   * @param config
+   */
   constructor(config: DbConfig) {
     this.dbConfig = config;
+    this.dbName = config.database || "default";
     this.require = createRequire(import.meta.url);
   }
 
@@ -153,9 +162,21 @@ export abstract class BaseAdapter implements IAdapter {
   protected ensureConnected(): void {
     if (!this.isConnected()) {
       logger.error("Database connection not established", { type: this.type });
-      throw new Error(`Not connected to ${this.type} database`);
+      throw new Error(
+        `Not connected to ${this.type} database. Please reconnect.`
+      );
     }
   }
+
+  protected async ensureConnectedAsync(): Promise<void> {
+    if (!this.isConnected()) {
+      throw new Error(
+        `Connection to ${this.type} database was lost. Please call connect() again.`
+      );
+    }
+  }
+
+  async healthCheck?(): Promise<boolean>;
 
   // ==========================================
   // 📋 SCHEMA MANAGEMENT

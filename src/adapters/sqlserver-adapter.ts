@@ -23,11 +23,7 @@ export class SQLServerAdapter extends BaseAdapter {
   type: DatabaseType = "sqlserver";
   databaseType: DatabaseType = "sqlserver";
   private pool: any = null;
-  /**
-   * ✅ Sử dụng sql.Transaction native để tránh mismatch error
-   * Dự trữ connection riêng cho transaction scope
-   */
-  private currentTransaction: any = null; // Native mssql Transaction object
+  private currentTransaction: any = null;
 
   constructor(config: DbConfig) {
     super(config);
@@ -54,12 +50,42 @@ export class SQLServerAdapter extends BaseAdapter {
     }
   }
 
+  isConnected(): boolean {
+    // Kiểm tra cả connection state VÀ pool.connected
+    const hasConnection =
+      this.connection !== null && this.connection.isConnected;
+    const hasPool = this.pool !== null;
+    const poolConnected = this.pool?.connected === true;
+
+    const result = hasConnection && hasPool && poolConnected;
+
+    if (!result && hasConnection) {
+      // Pool bị mất nhưng state vẫn true -> cập nhật state
+      logger.info(
+        "Connection state mismatch detected - pool disconnected but state was true",
+        {
+          hasConnection,
+          hasPool,
+          poolConnected: this.pool?.connected,
+        }
+      );
+
+      // Reset connection state
+      if (this.connection) {
+        this.connection.isConnected = false;
+      }
+    }
+
+    return result;
+  }
+
   async connect(schemaKey?: string): Promise<IConnection> {
     if (!this.dbConfig) throw Error("No database configuration provided.");
+    this.dbName = schemaKey || this.dbConfig.database || "default";
     const config = {
       ...this.dbConfig,
       abortTransactionOnError: true,
-      database: schemaKey || this.dbConfig.database,
+      database: this.dbName,
     } as SQLServerConfig;
 
     logger.debug("Connecting to SQL Server", {
@@ -425,6 +451,18 @@ export class SQLServerAdapter extends BaseAdapter {
   // ==========================================
   // 🔧 OVERRIDE: executeRaw - SUPPORT TRANSACTION SCOPING
   // ==========================================
+  private async ensurePoolConnected(): Promise<void> {
+    if (!this.pool || !this.pool.connected) {
+      logger.warn("Pool disconnected, attempting to reconnect", {
+        database: this.dbConfig?.database,
+        hasPool: !!this.pool,
+        poolConnected: this.pool?.connected,
+      });
+
+      // Reconnect
+      await this.connect(this.dbConfig?.database);
+    }
+  }
 
   /**
    * ✅ Nếu có currentTransaction, dùng transaction.request() thay vì pool.request()
@@ -435,21 +473,18 @@ export class SQLServerAdapter extends BaseAdapter {
       query: query.substring(0, 100) + (query.length > 100 ? "..." : ""),
       params: params?.length || 0,
       inTransaction: !!this.currentTransaction,
+      poolConnected: this.pool?.connected,
     });
 
-    if (!this.pool) {
-      logger.error("Not connected to SQL Server");
-      throw new Error("Not connected to SQL Server");
-    }
+    // ✅ Kiểm tra pool trước khi execute
+    await this.ensurePoolConnected();
 
     let request: any;
 
     if (this.currentTransaction) {
-      // ✅ Dùng transaction.request() cho scope
       request = new (this.dbModule as any).Request(this.currentTransaction);
       logger.trace("Using transaction request for query");
     } else {
-      // Fallback: pool.request()
       request = this.pool.request();
       logger.trace("Using pool request for query");
     }
@@ -482,7 +517,20 @@ export class SQLServerAdapter extends BaseAdapter {
         query: query.substring(0, 100) + "...",
         error: (error as Error).message,
         inTransaction: !!this.currentTransaction,
+        poolConnected: this.pool?.connected,
       });
+
+      if (
+        (error as any).code === "ECONNCLOSED" ||
+        (error as any).code === "ENOTOPEN"
+      ) {
+        logger.warn("Connection closed error detected, resetting state");
+        if (this.connection) {
+          this.connection.isConnected = false;
+        }
+        this.pool = null;
+      }
+
       throw error;
     }
   }
@@ -546,7 +594,7 @@ export class SQLServerAdapter extends BaseAdapter {
       tableName,
       indexName: indexDef.name,
     });
-    this.ensureConnected();
+    await this.ensurePoolConnected();
 
     const indexName =
       indexDef.name || `idx_${tableName}_${indexDef.fields.join("_")}`;
@@ -570,7 +618,7 @@ export class SQLServerAdapter extends BaseAdapter {
 
   async dropIndex(tableName: string, indexName: string): Promise<void> {
     logger.info("Dropping index (SQL Server)", { tableName, indexName });
-    this.ensureConnected();
+    await this.ensurePoolConnected();
 
     const query = `DROP INDEX ${QueryHelper.quoteIdentifier(
       indexName,
@@ -592,7 +640,7 @@ export class SQLServerAdapter extends BaseAdapter {
       tableName,
       constraintName: foreignKeyDef.name,
     });
-    this.ensureConnected();
+    await this.ensurePoolConnected();
 
     const constraintName =
       foreignKeyDef.name || `fk_${tableName}_${foreignKeyDef.fields.join("_")}`;
@@ -634,7 +682,7 @@ export class SQLServerAdapter extends BaseAdapter {
       tableName,
       foreignKeyName,
     });
-    this.ensureConnected();
+    await this.ensurePoolConnected();
 
     const query = `ALTER TABLE ${QueryHelper.quoteIdentifier(
       tableName,
@@ -651,7 +699,7 @@ export class SQLServerAdapter extends BaseAdapter {
 
   async getForeignKeys(tableName: string): Promise<ForeignKeyInfo[]> {
     logger.trace("Getting foreign keys (SQL Server)", { tableName });
-    this.ensureConnected();
+    await this.ensurePoolConnected();
 
     const query = `
       SELECT
@@ -684,7 +732,7 @@ export class SQLServerAdapter extends BaseAdapter {
     changes: SchemaDefinition
   ): Promise<void> {
     logger.info("Altering table (SQL Server)", { tableName });
-    this.ensureConnected();
+    await this.ensurePoolConnected();
 
     for (const [fieldName, fieldDef] of Object.entries(changes)) {
       const columnDef = this.buildColumnDefinition(fieldName, fieldDef);
@@ -711,7 +759,7 @@ export class SQLServerAdapter extends BaseAdapter {
       dataKeys: Object.keys(data),
     });
 
-    this.ensureConnected();
+    await this.ensurePoolConnected();
     const keys = Object.keys(data);
 
     const values = Object.values(data).map((v) => this.sanitizeValue(v));
@@ -764,7 +812,7 @@ export class SQLServerAdapter extends BaseAdapter {
       options,
     });
 
-    this.ensureConnected();
+    await this.ensurePoolConnected();
 
     const { clause, params } = QueryHelper.buildWhereClause(filter, this.type);
     const selectFields = QueryHelper.buildSelectFields(
@@ -883,7 +931,7 @@ export class SQLServerAdapter extends BaseAdapter {
   async count(tableName: string, filter?: any): Promise<number> {
     logger.trace("Counting records (SQL Server)", { tableName, filter });
 
-    this.ensureConnected();
+    await this.ensurePoolConnected();
     const { clause, params } = QueryHelper.buildWhereClause(
       filter || {},
       this.type
@@ -921,7 +969,7 @@ export class SQLServerAdapter extends BaseAdapter {
       type: this.type,
     });
 
-    this.ensureConnected();
+    await this.ensurePoolConnected();
 
     try {
       const sql = this.dbModule; // mssql module đã load trong connect()
@@ -1013,6 +1061,81 @@ export class SQLServerAdapter extends BaseAdapter {
         error: (error as Error).message,
       });
       throw error;
+    }
+  }
+
+  // Overide
+  async disconnect(): Promise<void> {
+    logger.info("Disconnecting from SQL Server", {
+      hasPool: !!this.pool,
+      poolConnected: this.pool?.connected,
+    });
+
+    try {
+      // Close transaction nếu có
+      if (this.currentTransaction) {
+        logger.debug("Rolling back active transaction before disconnect");
+        try {
+          await new Promise<void>((resolve) => {
+            this.currentTransaction.rollback(() => resolve());
+          });
+        } catch (err) {
+          logger.warn("Error rolling back transaction", {
+            error: (err as Error).message,
+          });
+        }
+        this.currentTransaction = null;
+      }
+
+      // Close pool
+      if (this.pool) {
+        if (this.pool.connected) {
+          await this.pool.close();
+          logger.debug("Pool closed successfully");
+        }
+        this.pool = null;
+      }
+
+      // Update connection state
+      if (this.connection) {
+        this.connection.isConnected = false;
+        this.connection = null;
+      }
+
+      logger.info("SQL Server disconnected successfully");
+    } catch (error) {
+      logger.error("Error during SQL Server disconnect", {
+        error: (error as Error).message,
+      });
+
+      // Force cleanup
+      this.pool = null;
+      this.currentTransaction = null;
+      if (this.connection) {
+        this.connection.isConnected = false;
+        this.connection = null;
+      }
+
+      throw error;
+    }
+  }
+
+  async healthCheck(): Promise<boolean> {
+    try {
+      if (!this.pool || !this.pool.connected) {
+        logger.debug("Health check failed - no pool or pool disconnected");
+        return false;
+      }
+
+      // Simple ping query
+      const result = await this.executeRaw("SELECT 1 AS health_check");
+      const isHealthy = result.rows?.[0]?.health_check === 1;
+
+      logger.trace("Health check completed", { isHealthy });
+      return isHealthy;
+    } catch (error) {
+      logger.error("Health check failed", { error: (error as Error).message });
+      return false;
     }
   }
 }
