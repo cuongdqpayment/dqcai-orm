@@ -12,13 +12,18 @@ import {
   SchemaDefinition,
   IndexDefinition,
   BulkOperation,
+  ExtendedQueryOptions,
+  FindWithPaginationOptions,
+  PaginationResult,
+  SearchOptions,
 } from "@/types/orm.types";
 import { ServiceStatus } from "@/types/service.types";
 import { createModuleLogger, ORMModules } from "@/logger";
+
 const logger = createModuleLogger(ORMModules.BASE_SERVICE);
 
 /**
- * ✅ ENHANCED Base Service with Advanced CRUD Operations
+ * ✅ ENHANCED Base Service with MongoDB-style Operations
  */
 export abstract class BaseService<TModel = any> {
   protected dao: UniversalDAO<any> | null = null;
@@ -253,15 +258,319 @@ export abstract class BaseService<TModel = any> {
     return this.getDAO().count(this.entityName, filter);
   }
 
-  // ==================== 🆕 ADVANCED CRUD OPERATIONS ====================
+  // ==================== 🆕 MONGODB-STYLE QUERY METHODS ====================
 
   /**
-   * Upsert - Insert nếu không tồn tại, Update nếu đã tồn tại
+   * findFirst - Tìm document đầu tiên thỏa mãn điều kiện (MongoDB style)
    * @example
-   * await userService.upsert({ name: 'John', age: 30 }, [name]);
-   * @param data - Dữ liệu cần insert/update
-   * @param uniqueFields - Các field dùng để check uniqueness
+   * const user = await userService.findFirst({ status: 'active' });
+   * const userWithSort = await userService.findFirst({ role: 'admin' }, { sort: { createdAt: -1 } });
    */
+  public async findFirst(
+    filter: QueryFilter = {},
+    options?: ExtendedQueryOptions
+  ): Promise<TModel | null> {
+    logger.trace("Finding first record (MongoDB style)", {
+      entityName: this.entityName,
+      filter,
+    });
+    await this.ensureInitialized();
+    this.lastAccess = Date.now();
+
+    const queryOptions: QueryOptions = {
+      ...options,
+      limit: 1,
+    };
+
+    const results = await this.getDAO().find<TModel>(
+      this.entityName,
+      filter,
+      queryOptions
+    );
+
+    return results.length > 0 ? results[0] : null;
+  }
+
+  /**
+   * findAll - Tìm tất cả documents (MongoDB style)
+   * @example
+   * const allUsers = await userService.findAll();
+   * const activeUsers = await userService.findAll({ status: 'active' });
+   * const sortedUsers = await userService.findAll({}, { sort: { name: 1 }, limit: 100 });
+   */
+  public async findAll(
+    filter: QueryFilter = {},
+    options?: ExtendedQueryOptions
+  ): Promise<TModel[]> {
+    logger.trace("Finding all records (MongoDB style)", {
+      entityName: this.entityName,
+      filter,
+    });
+    await this.ensureInitialized();
+    this.lastAccess = Date.now();
+
+    return this.getDAO().find<TModel>(this.entityName, filter, options);
+  }
+
+  /**
+   * findWithPagination - Tìm với phân trang (MongoDB style)
+   * @example
+   * const result = await userService.findWithPagination(
+   *   { status: 'active' },
+   *   { page: 1, limit: 20, sort: { createdAt: -1 } }
+   * );
+   * // Result: { data: [...], pagination: { total, page, limit, totalPages, hasNextPage, hasPrevPage } }
+   */
+  public async findWithPagination(
+    filter: QueryFilter = {},
+    options: FindWithPaginationOptions = {}
+  ): Promise<PaginationResult<TModel>> {
+    logger.trace("Finding records with pagination (MongoDB style)", {
+      entityName: this.entityName,
+      filter,
+      options,
+    });
+    await this.ensureInitialized();
+    this.lastAccess = Date.now();
+
+    const page = options.page || 1;
+    const limit = options.limit || 10;
+    const skip = (page - 1) * limit;
+
+    // Build query options
+    const queryOptions: QueryOptions = {
+      ...options,
+      limit,
+      skip,
+    };
+
+    // Execute queries in parallel
+    const [data, total] = await Promise.all([
+      this.getDAO().find<TModel>(this.entityName, filter, queryOptions),
+      this.getDAO().count(this.entityName, filter),
+    ]);
+
+    const totalPages = Math.ceil(total / limit);
+
+    return {
+      data,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1,
+      },
+    };
+  }
+
+  /**
+   * search - Tìm kiếm text trên nhiều fields (MongoDB style)
+   * @example
+   * // Simple search
+   * const results = await userService.search('john', ['name', 'email']);
+   * 
+   * // Advanced search with options
+   * const results = await userService.search(
+   *   'john',
+   *   ['name', 'email', 'description'],
+   *   {
+   *     caseSensitive: false,
+   *     exactMatch: false,
+   *     limit: 20,
+   *     sort: { createdAt: -1 }
+   *   }
+   * );
+   */
+  public async search(
+    searchTerm: string,
+    searchFields: string[],
+    options: SearchOptions = {}
+  ): Promise<TModel[]> {
+    logger.trace("Searching records (MongoDB style)", {
+      entityName: this.entityName,
+      searchTerm,
+      searchFields,
+    });
+    await this.ensureInitialized();
+    this.lastAccess = Date.now();
+
+    if (!searchTerm || searchFields.length === 0) {
+      logger.warn("Search term or search fields empty, returning empty array");
+      return [];
+    }
+
+    const caseSensitive = options.caseSensitive ?? false;
+    const exactMatch = options.exactMatch ?? false;
+
+    // Build search filter
+    const searchFilter: QueryFilter = {
+      $or: searchFields.map((field) => {
+        if (exactMatch) {
+          return { [field]: searchTerm };
+        }
+
+        // For partial match, use LIKE or regex depending on database
+        const databaseType = this.getDAO().databaseType;
+
+        if (["mongodb", "mongoose"].includes(databaseType)) {
+          // MongoDB regex
+          return {
+            [field]: {
+              $regex: searchTerm,
+              $options: caseSensitive ? "" : "i",
+            },
+          };
+        } else {
+          // SQL LIKE
+          const pattern = `%${searchTerm}%`;
+          return {
+            [field]: {
+              $like: caseSensitive ? pattern : pattern.toLowerCase(),
+            },
+          };
+        }
+      }),
+    };
+
+    // Merge with additional filters if provided
+    const finalFilter: QueryFilter = options.projection
+      ? { $and: [searchFilter, options.projection as any] }
+      : searchFilter;
+
+    // Build query options
+    const queryOptions: QueryOptions = {
+      limit: options.limit,
+      skip: options.skip,
+      sort: options.sort,
+    };
+
+    return this.getDAO().find<TModel>(
+      this.entityName,
+      finalFilter,
+      queryOptions
+    );
+  }
+
+  /**
+   * findMany - Alias for findAll (MongoDB style)
+   */
+  public async findMany(
+    filter: QueryFilter = {},
+    options?: ExtendedQueryOptions
+  ): Promise<TModel[]> {
+    return this.findAll(filter, options);
+  }
+
+  /**
+   * countDocuments - Alias for count (MongoDB style)
+   */
+  public async countDocuments(filter?: QueryFilter): Promise<number> {
+    logger.trace("Counting documents (MongoDB style)", {
+      entityName: this.entityName,
+    });
+    return this.count(filter);
+  }
+
+  /**
+   * estimatedDocumentCount - Fast count without filter (MongoDB style)
+   */
+  public async estimatedDocumentCount(): Promise<number> {
+    logger.trace("Estimated document count (MongoDB style)", {
+      entityName: this.entityName,
+    });
+    await this.ensureInitialized();
+    this.lastAccess = Date.now();
+
+    // For databases with fast count, use it
+    const databaseType = this.getDAO().databaseType;
+
+    if (["mongodb", "mongoose"].includes(databaseType)) {
+      // MongoDB can use estimatedDocumentCount
+      try {
+        return await this.getDAO().count(this.entityName);
+      } catch {
+        return this.count();
+      }
+    }
+
+    // For SQL databases, use regular count
+    return this.count();
+  }
+
+  /**
+   * insertOne - Alias for create (MongoDB style)
+   */
+  public async insertOne(data: Partial<TModel>): Promise<TModel> {
+    logger.debug("Inserting one document (MongoDB style)", {
+      entityName: this.entityName,
+    });
+    return this.create(data);
+  }
+
+  /**
+   * insertMany - Alias for createMany (MongoDB style)
+   */
+  public async insertMany(data: Partial<TModel>[]): Promise<TModel[]> {
+    logger.debug("Inserting many documents (MongoDB style)", {
+      entityName: this.entityName,
+      count: data.length,
+    });
+    return this.createMany(data);
+  }
+
+  /**
+   * updateMany - Alias for update (MongoDB style)
+   */
+  public async updateMany(
+    filter: QueryFilter,
+    data: Partial<TModel>
+  ): Promise<number> {
+    logger.debug("Updating many documents (MongoDB style)", {
+      entityName: this.entityName,
+    });
+    return this.update(filter, data);
+  }
+
+  /**
+   * deleteMany - Alias for delete (MongoDB style)
+   */
+  public async deleteMany(filter: QueryFilter): Promise<number> {
+    logger.debug("Deleting many documents (MongoDB style)", {
+      entityName: this.entityName,
+    });
+    return this.delete(filter);
+  }
+
+  /**
+   * replaceOne - Replace entire document (MongoDB style)
+   */
+  public async replaceOne(
+    filter: QueryFilter,
+    replacement: Partial<TModel>
+  ): Promise<boolean> {
+    logger.debug("Replacing one document (MongoDB style)", {
+      entityName: this.entityName,
+    });
+    await this.ensureInitialized();
+    this.lastAccess = Date.now();
+
+    // Find the document first
+    const existing = await this.findOne(filter);
+    if (!existing) {
+      return false;
+    }
+
+    // Replace with new data (keeping only id)
+    const id = (existing as any).id || (existing as any)._id;
+    const processedData = await this.beforeUpdate(filter, replacement);
+
+    return this.getDAO().updateById(this.entityName, id, processedData);
+  }
+
+  // ==================== ADVANCED CRUD OPERATIONS ====================
+
   async upsert<T = any>(
     data: Partial<T>,
     uniqueFields?: string[]
@@ -273,24 +582,21 @@ export abstract class BaseService<TModel = any> {
 
     await this.initialize();
 
-    // ✅ Build filter từ uniqueFields
     let filter: QueryFilter = {};
 
     if (uniqueFields && uniqueFields.length > 0) {
-      // Lấy giá trị từ data cho các unique fields
       for (const field of uniqueFields) {
         if (data[field as keyof T] !== undefined) {
           filter[field] = data[field as keyof T];
         }
       }
 
-      // Nếu không có giá trị nào, dùng empty filter
       if (Object.keys(filter).length === 0) {
         logger.warn("No values found for unique fields, upsert will insert", {
           entityName: this.entityName,
           uniqueFields,
         });
-        filter = {}; // Empty filter → sẽ insert
+        filter = {};
       }
     }
 
@@ -309,11 +615,6 @@ export abstract class BaseService<TModel = any> {
     return result as T;
   }
 
-  /**
-   * Kiểm tra sự tồn tại của record
-   * @example
-   * const exists = await userService.exists({ email: 'user@example.com' });
-   */
   public async exists(filter: QueryFilter): Promise<boolean> {
     logger.trace("Checking existence", { entityName: this.entityName });
     await this.ensureInitialized();
@@ -321,11 +622,6 @@ export abstract class BaseService<TModel = any> {
     return this.getDAO().exists(this.entityName, filter);
   }
 
-  /**
-   * Lấy các giá trị unique của một field
-   * @example
-   * const categories = await productService.distinct('category');
-   */
   public async distinct<T = any>(
     field: string,
     filter?: QueryFilter
@@ -339,11 +635,6 @@ export abstract class BaseService<TModel = any> {
     return this.getDAO().distinct<T>(this.entityName, field, filter);
   }
 
-  /**
-   * Find với pagination
-   * @example
-   * const result = await userService.paginate({ status: 'active' }, { page: 1, limit: 20 });
-   */
   public async paginate(
     filter: QueryFilter = {},
     options: { page?: number; limit?: number; sort?: any } = {}
@@ -380,14 +671,6 @@ export abstract class BaseService<TModel = any> {
     };
   }
 
-  /**
-   * Find first record hoặc tạo mới nếu không tìm thấy
-   * @example
-   * const user = await userService.findOrCreate(
-   *   { email: 'user@example.com' },
-   *   { name: 'John', email: 'user@example.com' }
-   * );
-   */
   public async findOrCreate(
     filter: QueryFilter,
     defaultData: Partial<TModel>
@@ -415,11 +698,6 @@ export abstract class BaseService<TModel = any> {
     return { record: await this.afterCreate(created), created: true };
   }
 
-  /**
-   * Increment giá trị numeric field
-   * @example
-   * await productService.increment({ id: 1 }, 'views', 1);
-   */
   public async increment(
     filter: QueryFilter,
     field: keyof TModel,
@@ -433,7 +711,6 @@ export abstract class BaseService<TModel = any> {
     await this.ensureInitialized();
     this.lastAccess = Date.now();
 
-    // For SQL databases, use direct SQL
     if (
       ["postgresql", "mysql", "mariadb", "sqlite", "sqlserver"].includes(
         this.getDAO().databaseType
@@ -451,7 +728,6 @@ export abstract class BaseService<TModel = any> {
       return result.rowsAffected || 0;
     }
 
-    // For NoSQL, fetch and update
     const records = await this.find(filter);
     let updated = 0;
     for (const record of records) {
@@ -467,11 +743,6 @@ export abstract class BaseService<TModel = any> {
     return updated;
   }
 
-  /**
-   * Decrement giá trị numeric field
-   * @example
-   * await productService.decrement({ id: 1 }, 'stock', 5);
-   */
   public async decrement(
     filter: QueryFilter,
     field: keyof TModel,
@@ -480,11 +751,6 @@ export abstract class BaseService<TModel = any> {
     return this.increment(filter, field, -value);
   }
 
-  /**
-   * Soft delete - Set deleted flag thay vì xóa thực sự
-   * @example
-   * await userService.softDelete({ id: 1 });
-   */
   public async softDelete(filter: QueryFilter): Promise<number> {
     logger.debug("Soft deleting records", { entityName: this.entityName });
     await this.ensureInitialized();
@@ -495,11 +761,6 @@ export abstract class BaseService<TModel = any> {
     } as any);
   }
 
-  /**
-   * Restore soft deleted records
-   * @example
-   * await userService.restore({ id: 1 });
-   */
   public async restore(filter: QueryFilter): Promise<number> {
     logger.debug("Restoring soft deleted records", {
       entityName: this.entityName,
@@ -512,15 +773,6 @@ export abstract class BaseService<TModel = any> {
     } as any);
   }
 
-  /**
-   * Bulk write operations (MongoDB-style)
-   * @example
-   * await userService.bulkWrite([
-   *   { insertOne: { document: { name: 'John' } } },
-   *   { updateOne: { filter: { id: 1 }, update: { age: 30 } } },
-   *   { deleteOne: { filter: { id: 2 } } }
-   * ]);
-   */
   public async bulkWrite(operations: BulkOperation[]): Promise<IResult> {
     logger.debug("Performing bulk write", {
       entityName: this.entityName,
@@ -531,14 +783,6 @@ export abstract class BaseService<TModel = any> {
     return this.getDAO().bulkWrite(this.entityName, operations);
   }
 
-  /**
-   * Aggregate operations (MongoDB-style pipeline)
-   * @example
-   * const stats = await userService.aggregate([
-   *   { $match: { status: 'active' } },
-   *   { $group: { _id: '$country', total: { $sum: 1 } } }
-   * ]);
-   */
   public async aggregate<T = any>(pipeline: any[]): Promise<T[]> {
     logger.debug("Performing aggregation", { entityName: this.entityName });
     await this.ensureInitialized();
@@ -546,11 +790,6 @@ export abstract class BaseService<TModel = any> {
     return this.getDAO().aggregate<T>(this.entityName, pipeline);
   }
 
-  /**
-   * Raw query execution
-   * @example
-   * const result = await userService.raw('SELECT * FROM users WHERE age > ?', [18]);
-   */
   public async raw<T = any>(query: string | any, params?: any[]): Promise<T> {
     logger.trace("Executing raw query", { entityName: this.entityName });
     await this.ensureInitialized();
@@ -558,22 +797,8 @@ export abstract class BaseService<TModel = any> {
     return this.getDAO().raw<T>(query, params);
   }
 
-  // ==================== 🆕 BULK OPERATIONS ====================
-  // ==================== 🆕 BULK OPERATIONS ====================
+  // ==================== BULK OPERATIONS ====================
 
-  /**
-   * Bulk upsert records - Insert if not exists, update if exists for multiple records
-   * @param dataArray - Array of data to insert or update
-   * @param searchFields - Fields to check for existence (defaults to 'id')
-   * @param useTransaction - Whether to wrap in transaction (default: true)
-   * @returns Result with created and updated records
-   * @example
-   * const result = await userService.bulkUpsert(
-   *   [{ email: 'user1@example.com', name: 'User 1' }, { email: 'user2@example.com', name: 'User 2' }],
-   *   ['email'],
-   *   true
-   * );
-   */
   public async bulkUpsert(
     dataArray: Partial<TModel>[],
     searchFields: string[] = ["id"],
@@ -622,7 +847,6 @@ export abstract class BaseService<TModel = any> {
         itemsCount: dataArray.length,
       });
 
-      // Process function
       const processBulkUpsert = async () => {
         for (let i = 0; i < dataArray.length; i++) {
           const data = dataArray[i];
@@ -639,7 +863,6 @@ export abstract class BaseService<TModel = any> {
               });
             }
 
-            // Build conditions from specified fields
             const conditions: QueryFilter = {};
             let hasAllRequiredFields = true;
 
@@ -653,7 +876,6 @@ export abstract class BaseService<TModel = any> {
               }
             }
 
-            // If we don't have all required fields, treat as insert
             if (!hasAllRequiredFields) {
               logger.trace(
                 "Missing required fields for item, performing insert",
@@ -673,14 +895,12 @@ export abstract class BaseService<TModel = any> {
               continue;
             }
 
-            // Check if record exists
             const existingRecord = await this.getDAO().findOne<TModel>(
               this.entityName,
               conditions
             );
 
             if (existingRecord) {
-              // Record exists - perform update
               logger.trace("Record exists, performing update", {
                 entityName: this.entityName,
                 index: i,
@@ -701,7 +921,6 @@ export abstract class BaseService<TModel = any> {
                 result.updated.push(updatedRecord);
               }
             } else {
-              // Record doesn't exist - perform insert
               logger.trace("Record does not exist, performing insert", {
                 entityName: this.entityName,
                 index: i,
@@ -730,7 +949,6 @@ export abstract class BaseService<TModel = any> {
         }
       };
 
-      // Execute with or without transaction
       if (useTransaction) {
         logger.debug("Executing bulk upsert in transaction", {
           entityName: this.entityName,
@@ -747,7 +965,6 @@ export abstract class BaseService<TModel = any> {
             error: (txError as Error).message,
             stack: (txError as Error).stack,
           });
-          // Không re-throw nếu muốn fallback to non-transactional, nhưng hiện tại giữ nguyên để fail-fast
           throw txError;
         }
       } else {
@@ -782,18 +999,6 @@ export abstract class BaseService<TModel = any> {
     }
   }
 
-  /**
-   * Bulk insert records with optimized batch processing
-   * @param items - Array of items to insert
-   * @param batchSize - Number of items to process per batch (default: 1000)
-   * @param skipErrors - Continue processing even if some items fail (default: false)
-   * @returns Result with success/error counts
-   * @example
-   * const result = await userService.bulkInsert([
-   *   { name: 'User 1', email: 'user1@example.com' },
-   *   { name: 'User 2', email: 'user2@example.com' }
-   * ], 500, false);
-   */
   public async bulkInsert(
     items: Partial<TModel>[],
     batchSize: number = 1000,
@@ -842,7 +1047,6 @@ export abstract class BaseService<TModel = any> {
         batchSize,
       });
 
-      // Process in batches
       for (let i = 0; i < items.length; i += batchSize) {
         const batch = items.slice(i, i + batchSize);
         const batchNumber = Math.floor(i / batchSize) + 1;
@@ -856,7 +1060,6 @@ export abstract class BaseService<TModel = any> {
         });
 
         if (skipErrors) {
-          // Process each item individually if skipErrors is true
           for (let j = 0; j < batch.length; j++) {
             const index = i + j;
             try {
@@ -881,7 +1084,6 @@ export abstract class BaseService<TModel = any> {
             }
           }
         } else {
-          // Process batch as a whole
           try {
             const processedBatch = await Promise.all(
               batch.map((item) => this.beforeCreate(item))
@@ -924,17 +1126,6 @@ export abstract class BaseService<TModel = any> {
     }
   }
 
-  /**
-   * Bulk create records with transaction support
-   * Similar to bulkInsert but always uses transaction and returns created records
-   * @param dataArray - Array of data to create
-   * @returns Array of created records
-   * @example
-   * const users = await userService.bulkCreate([
-   *   { name: 'User 1', email: 'user1@example.com' },
-   *   { name: 'User 2', email: 'user2@example.com' }
-   * ]);
-   */
   public async bulkCreate(dataArray: Partial<TModel>[]): Promise<TModel[]> {
     logger.info("Starting bulk create with transaction", {
       entityName: this.entityName,
@@ -1056,71 +1247,44 @@ export abstract class BaseService<TModel = any> {
     });
   }
 
-  // ==================== 🆕 SCHEMA MANAGEMENT ====================
+  // ==================== SCHEMA MANAGEMENT ====================
 
-  /**
-   * Tạo table/collection cho entity
-   */
   public async createTable(schema?: SchemaDefinition): Promise<void> {
     logger.info("Creating table", { entityName: this.entityName });
     await this.ensureInitialized();
     await this.getDAO().createTable(this.entityName, schema);
   }
 
-  /**
-   * Drop table/collection
-   */
   public async dropTable(): Promise<void> {
     logger.info("Dropping table", { entityName: this.entityName });
     await this.ensureInitialized();
     await this.getDAO().dropTable(this.entityName);
   }
 
-  /**
-   * Truncate table/collection
-   */
   public async truncateTable(): Promise<void> {
     logger.info("Truncating table", { entityName: this.entityName });
     await this.ensureInitialized();
     await this.getDAO().truncateTable(this.entityName);
   }
 
-  /**
-   * Alter table structure
-   */
   public async alterTable(changes: SchemaDefinition): Promise<void> {
     logger.info("Altering table", { entityName: this.entityName });
     await this.ensureInitialized();
     await this.getDAO().alterTable(this.entityName, changes);
   }
 
-  /**
-   * Kiểm tra table tồn tại
-   */
   public async tableExists(): Promise<boolean> {
     await this.ensureInitialized();
     return this.getDAO().tableExists(this.entityName);
   }
 
-  /**
-   * Lấy thông tin table structure
-   */
   public async getTableInfo(): Promise<any> {
     await this.ensureInitialized();
     return this.getDAO().getTableInfo(this.entityName);
   }
 
-  // ==================== 🆕 INDEX MANAGEMENT ====================
+  // ==================== INDEX MANAGEMENT ====================
 
-  /**
-   * Tạo index cho table
-   * @example
-   * await userService.createIndex({
-   *   name: 'idx_email',
-   *   fields: ['email'],
-   *   unique: true
-   * });
-   */
   public async createIndex(indexDef: IndexDefinition): Promise<void> {
     logger.info("Creating index", {
       entityName: this.entityName,
@@ -1130,9 +1294,6 @@ export abstract class BaseService<TModel = any> {
     await this.getDAO().createIndex(this.entityName, indexDef);
   }
 
-  /**
-   * Drop index
-   */
   public async dropIndex(indexName: string): Promise<void> {
     logger.info("Dropping index", { entityName: this.entityName, indexName });
     await this.ensureInitialized();
@@ -1221,18 +1382,12 @@ export abstract class BaseService<TModel = any> {
     await this.initialize();
   }
 
-  // ==================== 🆕 UTILITY METHODS ====================
+  // ==================== UTILITY METHODS ====================
 
-  /**
-   * Sanitize giá trị
-   */
   public sanitize(value: any): any {
     return this.getDAO().sanitize(value);
   }
 
-  /**
-   * Execute query thông qua DAO
-   */
   public async execute(query: string | any, params?: any[]): Promise<IResult> {
     await this.ensureInitialized();
     this.lastAccess = Date.now();

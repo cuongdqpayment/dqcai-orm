@@ -1,4 +1,4 @@
-import { DatabaseSchema, CommonFields } from "@dqcai/orm";
+import { DatabaseSchema, CommonFields } from "../src/index";
 
 // ========================
 // CORE DATABASE SCHEMA

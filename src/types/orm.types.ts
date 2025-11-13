@@ -173,10 +173,10 @@ export interface TableOptions {
  * Database schema
  */
 export interface DatabaseSchema {
-  version: string;                // dạng của nó là số ví dụ : 1.0 để so sánh được dễ dàng
-  database_name: string;          // tên database hoặc schema hoặc tên file của sqlite
-  schemas: Record<string, EntitySchemaDefinition>;  //tập cấu trúc định nghĩa cá bảng
-  description?: string;            // Mô tả database này để làm gì, mục đích cho developer hiểu ý nghĩa của database phục vụ cái gì
+  version: string; // dạng của nó là số ví dụ : 1.0 để so sánh được dễ dàng
+  database_name: string; // tên database hoặc schema hoặc tên file của sqlite
+  schemas: Record<string, EntitySchemaDefinition>; //tập cấu trúc định nghĩa cá bảng
+  description?: string; // Mô tả database này để làm gì, mục đích cho developer hiểu ý nghĩa của database phục vụ cái gì
 }
 
 /**
@@ -247,7 +247,7 @@ export interface QueryOptions {
   orderBy?: { [key: string]: SortDirection }; // Alias for sort
   select?: string[];
   fields?: string[]; // Alias for select
-  populate?: string[] | PopulateOptions[];
+  populate?: string | string[] | PopulateOptions[];
   joins?: JoinClause[];
   groupBy?: string[];
   having?: QueryFilter;
@@ -263,6 +263,64 @@ export interface PopulateOptions {
   match?: QueryFilter;
   populate?: PopulateOptions[];
 }
+
+// ==================== EXTENDED TYPES ====================
+
+/**
+ * MongoDB-style projection options
+ */
+export interface ProjectionOptions {
+  [field: string]: 0 | 1 | boolean;
+}
+
+/**
+ * MongoDB-style sort options
+ */
+export interface SortOptions {
+  [field: string]: 1 | -1 | "asc" | "desc";
+}
+
+/**
+ * Extended query options with MongoDB-style features
+ */
+export interface ExtendedQueryOptions extends QueryOptions {
+  projection?: ProjectionOptions;
+  lean?: boolean;
+}
+
+/**
+ * Pagination result structure
+ */
+export interface PaginationResult<T> {
+  data: T[];
+  pagination: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+    hasNextPage: boolean;
+    hasPrevPage: boolean;
+  };
+}
+
+/**
+ * Search options
+ */
+export interface SearchOptions extends ExtendedQueryOptions {
+  searchFields?: string[];
+  caseSensitive?: boolean;
+  exactMatch?: boolean;
+}
+
+/**
+ * FindWithPagination options
+ */
+export interface FindWithPaginationOptions extends ExtendedQueryOptions {
+  page?: number;
+  limit?: number;
+}
+
+// ==================== ENHANCED BASE SERVICE ====================
 
 /**
  * Transaction interface
