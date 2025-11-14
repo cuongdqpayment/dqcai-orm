@@ -11,6 +11,7 @@ import {
   ForeignKeyInfo,
   IConnection,
   IndexDefinition,
+  PrimaryKeyType,
   QueryFilter,
   QueryOptions,
   SchemaDefinition,
@@ -35,9 +36,11 @@ export class MongoDBAdapter extends BaseAdapter {
   private client: any = null;
   private db: any = null;
   private ObjectId: any = null;
+  private primaryKeyType: PrimaryKeyType = "objectid";
 
   constructor(config: DbConfig) {
     super(config);
+    this.primaryKeyType = (config as any).primaryKeyType || "objectid";
   }
 
   isSupported(): boolean {
@@ -694,7 +697,8 @@ export class MongoDBAdapter extends BaseAdapter {
       id,
     });
 
-    return this.findOne(collectionName, { _id: new this.ObjectId(id) } as any);
+    const idFilter = this.createIdFilter(id);
+    return this.findOne(collectionName, idFilter as QueryFilter);
   }
 
   /**
@@ -788,11 +792,32 @@ export class MongoDBAdapter extends BaseAdapter {
       dataKeys: Object.keys(data),
     });
 
-    return this.updateOne(
+    if (!this.db) {
+      logger.error("Not connected");
+      throw new Error("Not connected");
+    }
+
+    const sanitizedData = Object.entries(data).reduce((acc, [key, value]) => {
+      acc[key] = this.sanitizeValue(value);
+      return acc;
+    }, {} as any);
+
+    // Sử dụng helper để tạo filter linh hoạt
+    const idFilter = this.createIdFilter(id);
+    const mongoFilter = { ...idFilter }; // Có thể merge với filter khác nếu cần
+
+    const result = await this.db
+      .collection(collectionName)
+      .updateOne(mongoFilter, { $set: sanitizedData });
+
+    const updated = result.modifiedCount > 0;
+
+    logger.trace("Updated one document result", {
       collectionName,
-      { _id: new this.ObjectId(id) } as any,
-      data
-    );
+      updated,
+    });
+
+    return updated;
   }
 
   /**
@@ -863,9 +888,8 @@ export class MongoDBAdapter extends BaseAdapter {
       id,
     });
 
-    return this.deleteOne(collectionName, {
-      _id: new this.ObjectId(id),
-    } as any);
+    const idFilter = this.createIdFilter(id);
+    return this.deleteOne(collectionName, idFilter as QueryFilter);
   }
 
   async count(collectionName: string, filter?: QueryFilter): Promise<number> {
@@ -1004,10 +1028,14 @@ export class MongoDBAdapter extends BaseAdapter {
 
     // Convert id to _id
     if (converted.id) {
-      if (this.ObjectId && this.ObjectId.isValid(converted.id)) {
+      if (
+        this.primaryKeyType === "objectid" &&
+        this.ObjectId &&
+        this.ObjectId.isValid(converted.id)
+      ) {
         converted._id = new this.ObjectId(converted.id);
       } else {
-        converted._id = converted.id;
+        converted._id = converted.id; // String hoặc number
       }
       delete converted.id;
     }
@@ -1221,5 +1249,35 @@ export class MongoDBAdapter extends BaseAdapter {
     logger.trace("ObjectId validation result", { id, isValid });
 
     return isValid;
+  }
+
+  /**
+   * Tạo filter cho _id linh hoạt (pure function, dễ test)
+   * @param id
+   * @returns
+   */
+  private createIdFilter(id: any): any {
+    logger.trace("Creating ID filter", {
+      id,
+      primaryKeyType: this.primaryKeyType,
+    });
+
+    if (id === null || id === undefined) {
+      throw new Error("ID cannot be null or undefined");
+    }
+
+    // Nếu primaryKeyType là 'string' hoặc 'number', dùng trực tiếp
+    if (this.primaryKeyType !== "objectid") {
+      return { _id: id }; // MongoDB chấp nhận string/number cho _id
+    }
+
+    // Với ObjectId: Kiểm tra valid trước khi tạo
+    if (this.ObjectId && this.ObjectId.isValid(id)) {
+      return { _id: new this.ObjectId(id) };
+    } else {
+      // Fallback: Xử lý như string nếu không valid (cho tương thích legacy)
+      logger.warn("ID is not valid ObjectId, treating as string", { id });
+      return { _id: id };
+    }
   }
 }

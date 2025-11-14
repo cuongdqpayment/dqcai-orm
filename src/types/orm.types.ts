@@ -14,6 +14,7 @@ export type DatabaseType =
   | "mongodb"
   | "oracle";
 
+export type PrimaryKeyType = "objectid" | "string" | "number";
 /**
  * Field types for schema definition
  */
@@ -349,6 +350,7 @@ export interface DbConfig {
   ssl?: boolean | object;
   poolSize?: number;
   timeout?: number;
+  primaryKeyType?: PrimaryKeyType;
 }
 
 /**
