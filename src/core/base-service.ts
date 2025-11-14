@@ -366,32 +366,47 @@ export abstract class BaseService<TModel = any> {
   }
 
   /**
-   * search - Tìm kiếm text trên nhiều fields (MongoDB style)
+   * search - Tìm kiếm text trên nhiều fields với điều kiện lọc trước (MongoDB style)
+   * @param searchTerm - Từ khóa tìm kiếm
+   * @param searchFields - Các fields cần tìm kiếm
+   * @param options - Tùy chọn tìm kiếm
+   * @param preFilter - Điều kiện lọc trước khi search (VD: { status: 'active', deleted: false })
+   *
    * @example
    * // Simple search
    * const results = await userService.search('john', ['name', 'email']);
-   * 
-   * // Advanced search with options
-   * const results = await userService.search(
+   *
+   * // Search with pre-filter (only active users)
+   * const activeUsers = await userService.search(
    *   'john',
-   *   ['name', 'email', 'description'],
+   *   ['name', 'email'],
+   *   { caseSensitive: false, limit: 20 },
+   *   { is_active: true, deleted: false }
+   * );
+   *
+   * // Search with complex pre-filter
+   * const results = await orderService.search(
+   *   'premium',
+   *   ['customer_name', 'notes'],
+   *   { limit: 10, sort: { created_at: -1 } },
    *   {
-   *     caseSensitive: false,
-   *     exactMatch: false,
-   *     limit: 20,
-   *     sort: { createdAt: -1 }
+   *     store_id: storeId,
+   *     status: { $in: ['pending', 'confirmed'] },
+   *     total: { $gte: 100000 }
    *   }
    * );
    */
   public async search(
     searchTerm: string,
     searchFields: string[],
-    options: SearchOptions = {}
+    options: SearchOptions = {},
+    preFilter?: QueryFilter
   ): Promise<TModel[]> {
     logger.trace("Searching records (MongoDB style)", {
       entityName: this.entityName,
       searchTerm,
       searchFields,
+      preFilter,
     });
     await this.ensureInitialized();
     this.lastAccess = Date.now();
@@ -434,10 +449,23 @@ export abstract class BaseService<TModel = any> {
       }),
     };
 
-    // Merge with additional filters if provided
-    const finalFilter: QueryFilter = options.projection
-      ? { $and: [searchFilter, options.projection as any] }
-      : searchFilter;
+    // ✅ Merge pre-filter with search filter
+    let finalFilter: QueryFilter;
+
+    if (preFilter && Object.keys(preFilter).length > 0) {
+      // Combine preFilter AND searchFilter
+      finalFilter = {
+        $and: [preFilter, searchFilter],
+      };
+
+      logger.trace("Applied pre-filter to search", {
+        entityName: this.entityName,
+        preFilter,
+        searchFilter,
+      });
+    } else {
+      finalFilter = searchFilter;
+    }
 
     // Build query options
     const queryOptions: QueryOptions = {
@@ -445,6 +473,12 @@ export abstract class BaseService<TModel = any> {
       skip: options.skip,
       sort: options.sort,
     };
+
+    logger.debug("Executing search query", {
+      entityName: this.entityName,
+      finalFilter,
+      queryOptions,
+    });
 
     return this.getDAO().find<TModel>(
       this.entityName,
