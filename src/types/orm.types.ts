@@ -351,6 +351,7 @@ export interface DbConfig {
   poolSize?: number;
   timeout?: number;
   primaryKeyType?: PrimaryKeyType;
+  autoMapId?: boolean;
 }
 
 /**
