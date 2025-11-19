@@ -69,29 +69,28 @@ export class MongoDBAdapter extends BaseAdapter {
     if (!this.dbConfig) throw Error("No database configuration provided.");
     this.dbName = schemaKey || this.dbConfig.database || "default";
     const config = { ...this.dbConfig, database: this.dbName } as MongoDBConfig;
-
+    const database = config.database;
+    const url =
+      config.url || config.connectionString || "mongodb://localhost:27017";
     logger.debug("Connecting to MongoDB", {
-      database: config.database,
-      host: config.host || "localhost",
-      port: config.port || 27017,
+      database,
+      url,
     });
 
     try {
       const { MongoClient, ObjectId } = await import("mongodb");
-      const url =
-        config.url || config.connectionString || "mongodb://localhost:27017";
       const client = new MongoClient(url, config.options);
 
       await client.connect();
-      const db = client.db(config.database);
+      const db = client.db(database);
 
       // Verify database access
       try {
         await db.listCollections().toArray();
-        logger.trace("Database access verified", { database: config.database });
+        logger.trace("Database access verified", { database });
       } catch (accessError) {
         logger.warn("Could not verify database access", {
-          database: config.database,
+          database,
           error: (accessError as Error).message,
         });
       }
