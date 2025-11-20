@@ -225,22 +225,35 @@ export class MongoDBAdapter extends BaseAdapter {
    * @returns MongoDB filter object { _id: ... }
    */
   private createIdFilter(id: any): any {
+    logger.trace("🔑 Creating ID filter", {
+      id,
+      type: typeof id,
+      primaryKeyType: this.primaryKeyType,
+      isObjectId: id instanceof this.ObjectId,
+    });
     if (id === null || id === undefined) {
       throw new Error("ID cannot be null or undefined");
     }
 
     // If primaryKeyType is not objectid, use direct value
     if (this.primaryKeyType !== "objectid") {
+      logger.trace("Using direct ID value (non-ObjectId mode)");
       return { _id: id };
     }
 
     // For ObjectId: validate and convert
     if (this.ObjectId) {
       if (id instanceof this.ObjectId) {
+        logger.trace("ID is already ObjectId");
         return { _id: id };
       }
       if (typeof id === "string" && this.ObjectId.isValid(id)) {
-        return { _id: new this.ObjectId(id) };
+        const objectId = new this.ObjectId(id);
+        logger.trace("Converted string to ObjectId", {
+          original: id,
+          converted: objectId.toString(),
+        });
+        return { _id: objectId };
       }
     }
 
@@ -256,10 +269,19 @@ export class MongoDBAdapter extends BaseAdapter {
    * 🔍 Convert QueryFilter to MongoDB query format
    */
   private convertFilterToMongo(filter: QueryFilter): any {
-    if (!filter || Object.keys(filter).length === 0) return {};
+    logger.trace("🔄 Converting filter to MongoDB format", {
+      filter,
+      filterKeys: Object.keys(filter || {}),
+    });
+
+    if (!filter || Object.keys(filter).length === 0) {
+      logger.trace("Empty filter, returning {}");
+      return {};
+    }
 
     // First convert id → _id
     const converted = this.toMongo(filter);
+    logger.trace("After toMongo conversion", { converted });
 
     // Then handle operators
     const mongoFilter: any = {};
@@ -315,6 +337,7 @@ export class MongoDBAdapter extends BaseAdapter {
       }
     }
 
+    logger.trace("Final MongoDB filter", { mongoFilter });
     return mongoFilter;
   }
 
@@ -488,28 +511,52 @@ export class MongoDBAdapter extends BaseAdapter {
     filter: QueryFilter,
     options?: QueryOptions
   ): Promise<any | null> {
-    logger.trace("Finding one document", { collectionName });
+    logger.trace("🔍 Finding one document", {
+      collectionName,
+      filter,
+      options,
+    });
 
     if (!this.db) throw new Error("Not connected");
 
     const mongoFilter = this.convertFilterToMongo(filter);
+    logger.debug("📋 MongoDB filter prepared", { mongoFilter });
     const mongoOptions: any = {};
     if (options?.sort) mongoOptions.sort = options.sort;
 
-    const result = await this.db
-      .collection(collectionName)
-      .findOne(mongoFilter, mongoOptions);
+    try {
+      const result = await this.db
+        .collection(collectionName)
+        .findOne(mongoFilter, mongoOptions);
 
-    return result ? this.fromMongo(result) : null;
+      logger.debug("✅ MongoDB findOne result", {
+        found: !!result,
+        resultId: result?._id?.toString(),
+      });
+
+      return result ? this.fromMongo(result) : null;
+    } catch (error) {
+      logger.error("❌ MongoDB findOne error", {
+        collectionName,
+        mongoFilter,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
   }
 
   /**
    * Override findById - Add conversion
    */
   async findById(collectionName: string, id: any): Promise<any | null> {
-    logger.trace("Finding document by ID", { collectionName, id });
+    logger.trace("🆔 Finding document by ID", {
+      collectionName,
+      id,
+      idType: typeof id,
+    });
 
     const mongoFilter = this.createIdFilter(id);
+    logger.debug("📋 Created ID filter", { mongoFilter });
     return this.findOne(collectionName, mongoFilter as QueryFilter);
   }
 
