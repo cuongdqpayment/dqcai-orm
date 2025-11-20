@@ -139,7 +139,39 @@ export class MongoDBAdapter extends BaseAdapter {
       return data.map((item) => this.toMongo(item));
     }
 
+    // 🔍 DEBUG LOG
+    logger.trace("🔄 toMongo called", {
+      data,
+      hasId: data.id !== undefined,
+      has_id: data._id !== undefined,
+      _idType: data._id ? typeof data._id : "undefined",
+      _idIsObjectId: data._id instanceof this.ObjectId,
+      _idConstructor: data._id?.constructor?.name,
+    });
+
     const converted = { ...data };
+
+    // ✅ CRITICAL FIX: If _id already exists, don't touch it!
+    if (converted._id !== undefined) {
+      logger.trace("⏭️ Skipping conversion - _id already exists", {
+        _id: converted._id,
+        isObjectId: converted._id instanceof this.ObjectId,
+        type: typeof converted._id,
+      });
+
+      // Still process other nested objects, but skip _id
+      for (const [key, value] of Object.entries(converted)) {
+        if (key === "_id") continue; // Skip _id field
+
+        if (value && typeof value === "object" && !Array.isArray(value)) {
+          // Skip MongoDB operators
+          if (!key.startsWith("$") && !(value instanceof this.ObjectId)) {
+            converted[key] = this.toMongo(value);
+          }
+        }
+      }
+      return converted;
+    }
 
     // Convert id → _id
     if (converted.id !== undefined) {
@@ -165,9 +197,11 @@ export class MongoDBAdapter extends BaseAdapter {
 
     // Recursively convert nested objects (e.g., foreign keys in filters)
     for (const [key, value] of Object.entries(converted)) {
+      if (key === "_id") continue; // Already processed
+
       if (value && typeof value === "object" && !Array.isArray(value)) {
         // Skip MongoDB operators
-        if (!key.startsWith("$")) {
+        if (!key.startsWith("$") && !(value instanceof this.ObjectId)) {
           converted[key] = this.toMongo(value);
         }
       }
