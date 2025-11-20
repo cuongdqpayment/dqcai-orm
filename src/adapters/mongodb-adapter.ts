@@ -221,8 +221,7 @@ export class MongoDBAdapter extends BaseAdapter {
 
   /**
    * 🎯 Create MongoDB filter for ID field
-   * @param id - ID value (string, number, or ObjectId)
-   * @returns MongoDB filter object { _id: ... }
+   * ✅ Returns ObjectId instance directly, NOT string
    */
   private createIdFilter(id: any): any {
     logger.trace("🔑 Creating ID filter", {
@@ -231,6 +230,7 @@ export class MongoDBAdapter extends BaseAdapter {
       primaryKeyType: this.primaryKeyType,
       isObjectId: id instanceof this.ObjectId,
     });
+
     if (id === null || id === undefined) {
       throw new Error("ID cannot be null or undefined");
     }
@@ -243,22 +243,27 @@ export class MongoDBAdapter extends BaseAdapter {
 
     // For ObjectId: validate and convert
     if (this.ObjectId) {
+      // ✅ If already ObjectId instance, use it directly
       if (id instanceof this.ObjectId) {
         logger.trace("ID is already ObjectId");
         return { _id: id };
       }
+
+      // ✅ Convert string to ObjectId - return INSTANCE, not string!
       if (typeof id === "string" && this.ObjectId.isValid(id)) {
         const objectId = new this.ObjectId(id);
         logger.trace("Converted string to ObjectId", {
           original: id,
           converted: objectId.toString(),
+          isInstance: objectId instanceof this.ObjectId,
         });
+        // ✅ Return ObjectId instance directly
         return { _id: objectId };
       }
     }
 
     // Fallback: treat as direct value (for compatibility)
-    logger.warn("ID is not valid ObjectId, using as-is", {
+    logger.warn("⚠️ ID is not valid ObjectId, using as-is", {
       id,
       type: typeof id,
     });
