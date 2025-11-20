@@ -334,6 +334,12 @@ export class MongoDBAdapter extends BaseAdapter {
         continue;
       }
 
+      // ✅ CRITICAL FIX: Skip ObjectId instances - don't process as operators
+      if (value instanceof this.ObjectId) {
+        mongoFilter[key] = value;
+        continue;
+      }
+
       // Handle comparison operators
       if (
         typeof value === "object" &&
